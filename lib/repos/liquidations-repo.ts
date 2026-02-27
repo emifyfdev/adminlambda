@@ -195,3 +195,117 @@ export async function generateMonthlyLiquidation(input: { month: string }) {
   revalidatePath("/liquidations")
   return { ok: true as const, liquidationId }
 }
+
+export async function recalculateLiquidation(liquidationId: string) {
+  const supabase = await createClient()
+
+  // 1) Traer cabecera (periodo)
+  const { data: liq, error: liqErr } = await supabase
+    .from("liquidations")
+    .select("id, period_start, period_end, status, frequency")
+    .eq("id", liquidationId)
+    .single()
+
+  if (liqErr || !liq) return { ok: false as const, error: liqErr?.message ?? "No existe liquidación" }
+
+  if (liq.status === "locked") {
+    return { ok: false as const, error: "La liquidación está bloqueada. No se puede recalcular." }
+  }
+
+  const period_start = liq.period_start as string
+  const period_end = liq.period_end as string
+
+  // 2) Borrar líneas actuales
+  const { error: delErr } = await supabase
+    .from("liquidation_lines")
+    .delete()
+    .eq("liquidation_id", liquidationId)
+
+  if (delErr) return { ok: false as const, error: delErr.message }
+
+  // 3) Traer ventas confirmadas del período
+  const { data: sales, error: salesErr } = await supabase
+    .from("sales")
+    .select(`
+      id, seller_id, sold_at, status, commission_plan_id,
+      items:sale_items(qty, unit_price, discount, product:products(cost)),
+      plan:commission_plans(default_rate, base_calc)
+    `)
+    .eq("status", "confirmed")
+    .gte("sold_at", `${period_start}T00:00:00.000Z`)
+    .lte("sold_at", `${period_end}T23:59:59.999Z`)
+
+  if (salesErr) return { ok: false as const, error: salesErr.message }
+
+  // 4) Recalcular acumulados por seller
+  const acc = new Map<string, any>()
+
+  for (const s of (sales ?? []) as any[]) {
+    const sellerId = s.seller_id as string
+    if (!sellerId) continue
+
+    const items = (s.items ?? []) as any[]
+    let gross = 0
+    let discount = 0
+    let net = 0
+    let cost = 0
+
+    for (const it of items) {
+      const qty = Number(it.qty) || 0
+      const unit = Number(it.unit_price) || 0
+      const disc = Number(it.discount) || 0 // monto
+      const lineGross = qty * unit
+      const lineNet = Math.max(0, lineGross - disc)
+
+      gross += lineGross
+      discount += disc
+      net += lineNet
+      cost += (Number(it.product?.cost) || 0) * qty
+    }
+
+    const rate = Number(s.plan?.default_rate) || 0
+    const baseCalc = (s.plan?.base_calc as "sale" | "margin") ?? "sale"
+    const base = baseCalc === "margin" ? (net - cost) : net
+    const commission = Math.max(0, base * rate)
+    const profit = net - cost - commission
+
+    const prev = acc.get(sellerId)
+    if (!prev) {
+      acc.set(sellerId, {
+        seller_id: sellerId,
+        gross_total: gross,
+        discount_total: discount,
+        net_total: net,
+        cost_total: cost,
+        commission_total: commission,
+        company_profit: profit,
+      })
+    } else {
+      prev.gross_total += gross
+      prev.discount_total += discount
+      prev.net_total += net
+      prev.cost_total += cost
+      prev.commission_total += commission
+      prev.company_profit += profit
+    }
+  }
+
+  const payload = Array.from(acc.values()).map((l: any) => ({
+    liquidation_id: liquidationId,
+    seller_id: l.seller_id,
+    gross_total: l.gross_total,
+    discount_total: l.discount_total,
+    net_total: l.net_total,
+    cost_total: l.cost_total,
+    commission_total: l.commission_total,
+    company_profit: l.company_profit,
+  }))
+
+  if (payload.length) {
+    const { error: insErr } = await supabase.from("liquidation_lines").insert(payload)
+    if (insErr) return { ok: false as const, error: insErr.message }
+  }
+
+  revalidatePath("/liquidations")
+  return { ok: true as const }
+}

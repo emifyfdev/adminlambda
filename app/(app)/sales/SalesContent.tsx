@@ -9,6 +9,8 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Badge } from "@/components/ui/badge";
+
 import {
   Dialog,
   DialogContent,
@@ -714,7 +716,7 @@ export default function SalesContent({
       </Dialog>
 
       <Dialog open={viewOpen} onOpenChange={setViewOpen}>
-        <DialogContent className="max-w-3xl">
+    <DialogContent className="max-w-7xl w-[96vw] max-h-[92vh] overflow-y-auto overflow-x-hidden p-2 ">
           <DialogHeader>
             <DialogTitle>Detalle de venta</DialogTitle>
           </DialogHeader>
@@ -738,185 +740,261 @@ export default function SalesContent({
 
                 return (
                   <div className="space-y-4">
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
-                      <div className="rounded-md border p-3">
-                        <div className="text-xs text-muted-foreground">
-                          Vendedor
+                    {/* Top: título + chips */}
+                    <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+                      <div className="space-y-0.5">
+                        <div className="text-sm text-muted-foreground">
+                          Detalle
                         </div>
-                        <div className="font-medium">
-                          {seller?.name ?? seller?.display_name ?? "-"}
+                        <div className="text-base font-semibold">
+                          {seller?.name ?? seller?.display_name ?? "Vendedor"}
                           {seller?.sales_team ? ` (${seller.sales_team})` : ""}
                         </div>
                       </div>
 
-                      <div className="rounded-md border p-3">
-                        <div className="text-xs text-muted-foreground">
-                          Tipo de comisión
-                        </div>
-                        <div className="font-medium">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Badge variant="secondary" className="rounded-full">
+                          {sale?.channel ?? "—"}
+                        </Badge>
+                        <Badge variant="secondary" className="rounded-full">
+                          {sale?.status ?? "—"}
+                        </Badge>
+                        <Badge variant="outline" className="rounded-full">
                           {plan
-                            ? `${plan.name} (${Math.round(Number(plan.default_rate) * 100)}%)`
-                            : "-"}
-                        </div>
-                      </div>
-                      <div className="rounded-md border p-3 md:col-span-2">
-                        <div className="text-xs text-muted-foreground">
-                          Total venta (guardado)
-                        </div>
-                        <div className="font-semibold">
-                          {sale?.total_net != null
-                            ? `$${Number(sale.total_net).toLocaleString("es-AR")}`
-                            : "-"}
-                        </div>
-                      </div>
-                      <div className="rounded-md border p-3">
-                        <div className="text-xs text-muted-foreground">
-                          Fecha
-                        </div>
-                        <div className="font-medium">
-                          {sale
-                            ? new Date(sale.sold_at).toLocaleString("es-AR")
-                            : "-"}
-                        </div>
-                      </div>
-
-                      <div className="rounded-md border p-3">
-                        <div className="text-xs text-muted-foreground">
-                          Canal / Estado
-                        </div>
-                        <div className="font-medium">
-                          {sale?.channel ?? "-"} · {sale?.status ?? "-"}
-                        </div>
-                      </div>
-
-                      <div className="rounded-md border p-3 md:col-span-2">
-                        <div className="text-xs text-muted-foreground">
-                          Cliente
-                        </div>
-                        <div className="font-medium">
-                          {sale?.customer_name ?? "-"}
-                        </div>
+                            ? `${Math.round(Number(plan.default_rate) * 100)}%`
+                            : "—%"}
+                        </Badge>
+                        <Badge variant="outline" className="rounded-full">
+                          {plan?.name ?? "Sin plan"}
+                        </Badge>
                       </div>
                     </div>
 
-                <div className="rounded-lg border overflow-hidden">
-  <div className="w-full overflow-x-auto">
-    <table className="w-full text-sm">
-      <thead className="bg-muted/40">
-        <tr className="text-left">
-          <th className="p-3 whitespace-nowrap">Producto</th>
-          <th className="p-3 whitespace-nowrap">Cant.</th>
-          <th className="p-3 whitespace-nowrap">Precio</th>
-          <th className="p-3 whitespace-nowrap">Desc ($)</th>
-          <th className="p-3 whitespace-nowrap">Comisión</th>
-          <th className="p-3 whitespace-nowrap">Total</th>
-        </tr>
-      </thead>
+                    {/* KPIs compactos */}
+                    {(() => {
+                      const rate = plan ? Number(plan.default_rate) || 0 : 0;
 
-      <tbody>
-        {(() => {
-          const rate = plan ? Number(plan.default_rate) || 0 : 0
+                      const rows = viewItems.map((it) => {
+                        const qty = Number(it.qty) || 0;
+                        const unit = Number(it.unit_price) || 0;
+                        const disc = Number(it.discount) || 0;
+                        const gross = qty * unit;
+                        const net = Math.max(0, gross - disc);
+                        return { qty, unit, disc, gross, net };
+                      });
 
-          // Lineas netas reales (para prorratear)
-          const lines = viewItems.map((it) => {
-            const qty = Number(it.qty) || 0
-            const unit = Number(it.unit_price) || 0
-            const discReal = Number(it.discount) || 0 // descuento real guardado en sale_items
-            const gross = qty * unit
-            const net = Math.max(0, gross - discReal)
-            return { it, qty, unit, discReal, gross, net }
-          })
+                      const grossTotal = rows.reduce((a, r) => a + r.gross, 0);
+                      const discountTotal = rows.reduce(
+                        (a, r) => a + r.disc,
+                        0,
+                      );
+                      const netSale =
+                        sale?.total_net != null
+                          ? Number(sale.total_net)
+                          : Math.max(0, grossTotal - discountTotal);
+                      const commissionTotal = Math.max(0, netSale * rate);
+                      const netCompany = Math.max(0, netSale - commissionTotal);
 
-          const grossTotal = lines.reduce((a, l) => a + l.gross, 0)
-          const netTotalCalc = lines.reduce((a, l) => a + l.net, 0)
+                      return (
+                        <>
+                          <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+                            <Card className="shadow-none">
+                              <CardContent className="p-4">
+                                <div className="text-xs text-muted-foreground">
+                                  Total venta
+                                </div>
+                                <div className="mt-1 text-2xl font-semibold">
+                                  ${netSale.toLocaleString("es-AR")}
+                                </div>
+                              </CardContent>
+                            </Card>
 
-          // Usamos el total guardado como "fuente de verdad" si existe:
-          const netTotal = sale?.total_net != null ? Number(sale.total_net) : netTotalCalc
+                            <Card className="shadow-none">
+                              <CardContent className="p-4">
+                                <div className="text-xs text-muted-foreground">
+                                  Comisión
+                                </div>
+                                <div className="mt-1 text-2xl font-semibold">
+                                  $
+                                  {commissionTotal.toLocaleString("es-AR", {
+                                    maximumFractionDigits: 2,
+                                  })}
+                                </div>
+                              </CardContent>
+                            </Card>
 
-          const discountTotalReal = Math.max(0, grossTotal - netTotal) // descuento global (incluye todo lo que baje del bruto)
-          const commissionTotal = Math.max(0, netTotal * rate)
+                            <Card className="shadow-none">
+                              <CardContent className="p-4">
+                                <div className="text-xs text-muted-foreground">
+                                  Neto empresa
+                                </div>
+                                <div className="mt-1 text-2xl font-semibold">
+                                  $
+                                  {netCompany.toLocaleString("es-AR", {
+                                    maximumFractionDigits: 2,
+                                  })}
+                                </div>
+                              </CardContent>
+                            </Card>
+                          </div>
 
-          return (
-            <>
-              {lines.map(({ it, qty, unit, gross, net }) => {
-                const weight = netTotalCalc > 0 ? (net / netTotalCalc) : 0
+                          {/* Meta compacta */}
+                          <div className="grid grid-cols-1 gap-2 md:grid-cols-2 text-sm">
+                            <div className="flex items-center justify-between rounded-md border px-3 py-2">
+                              <span className="text-muted-foreground">
+                                Fecha
+                              </span>
+                              <span className="font-medium">
+                                {sale
+                                  ? new Date(sale.sold_at).toLocaleString(
+                                      "es-AR",
+                                    )
+                                  : "—"}
+                              </span>
+                            </div>
 
-                // ✅ Descuento prorrateado (igual que comisión)
-                const discountLine = weight * discountTotalReal
+                            <div className="flex items-center justify-between rounded-md border px-3 py-2">
+                              <span className="text-muted-foreground">
+                                Cliente
+                              </span>
+                              <span className="font-medium">
+                                {sale?.customer_name ?? "—"}
+                              </span>
+                            </div>
+                          </div>
 
-                // ✅ Comisión prorrateada (igual que antes)
-                const commissionLine = weight * commissionTotal
+                          {/* Tabla linda (sin scroll-bar fea) */}
+                          <div className="rounded-lg border">
+                           <div className="rounded-lg border overflow-hidden bg-background">
+  <table className="w-full text-sm table-fixed">
+    <thead className="bg-muted/40">
+      <tr className="text-left">
+        <th className="p-3 w-[34%]">Producto</th>
+        <th className="p-3 w-[10%] text-right">Cant.</th>
+        <th className="p-3 w-[14%] text-right">Precio</th>
+        <th className="p-3 w-[14%] text-right">Desc</th>
+        <th className="p-3 w-[14%] text-right">Comisión</th>
+        <th className="p-3 w-[14%] text-right">Total</th>
+      </tr>
+    </thead>
 
-                return (
-                  <tr key={it.id} className="border-t">
-                    <td className="p-3 whitespace-nowrap">{it.product?.name ?? "-"}</td>
-                    <td className="p-3 whitespace-nowrap">{qty}</td>
-                    <td className="p-3 whitespace-nowrap">${unit.toLocaleString("es-AR")}</td>
+                                <tbody className="tabular-nums">
+                                  {(() => {
+                                    const netForWeights = rows.reduce(
+                                      (a, r) => a + r.net,
+                                      0,
+                                    );
 
-                    <td className="p-3 whitespace-nowrap">
-                      ${discountLine.toLocaleString("es-AR", { maximumFractionDigits: 2 })}
-                    </td>
+                                    // mostramos 1 fila por viewItem
+                                    return (
+                                      <>
+                                        {viewItems.map((it) => {
+                                          const qty = Number(it.qty) || 0;
+                                          const unit =
+                                            Number(it.unit_price) || 0;
+                                          const disc = Number(it.discount) || 0;
+                                          const gross = qty * unit;
+                                          const net = Math.max(0, gross - disc);
 
-                    <td className="p-3 whitespace-nowrap">
-                      ${commissionLine.toLocaleString("es-AR", { maximumFractionDigits: 2 })}
-                    </td>
+                                          const w =
+                                            netForWeights > 0
+                                              ? net / netForWeights
+                                              : 0;
+                                          const commLine = commissionTotal * w;
 
-                    <td className="p-3 whitespace-nowrap font-medium">
-                      ${net.toLocaleString("es-AR")}
-                    </td>
-                  </tr>
-                )
-              })}
+                                          return (
+                                            <tr
+                                              key={it.id}
+                                              className="border-t"
+                                            >
+                                              <td className="p-3 truncate">{it.product?.name ?? "-"}</td>
+                                              <td className="p-3 text-right">
+                                                {qty}
+                                              </td>
+                                              <td className="p-3 text-right ">
+                                                ${unit.toLocaleString("es-AR")}
+                                              </td>
+                                              <td className="p-3 text-right">
+                                                ${disc.toLocaleString("es-AR")}
+                                              </td>
+                                              <td className="p-3 text-right">
+                                                $
+                                                {commLine.toLocaleString(
+                                                  "es-AR",
+                                                  { maximumFractionDigits: 2 },
+                                                )}
+                                              </td>
+                                              <td className="p-3 text-right font-medium">
+                                                ${net.toLocaleString("es-AR")}
+                                              </td>
+                                            </tr>
+                                          );
+                                        })}
 
-              {viewItems.length === 0 ? (
-                <tr>
-                  <td colSpan={6} className="p-6 text-center text-muted-foreground">
-                    No hay ítems para esta venta.
-                  </td>
-                </tr>
-              ) : null}
+                                        {/* Totales */}
+                                        <tr className="border-t bg-muted/20">
+                                          <td
+                                            className="p-3 font-medium "
+                                            colSpan={3}
+                                          >
+                                            TOTAL BRUTO
+                                          </td>
+                                          <td className="p-3 text-right font-medium">
+                                            -$
+                                            {discountTotal.toLocaleString(
+                                              "es-AR",
+                                            )}
+                                          </td>
+                                          <td className="p-3 text-right font-medium">
+                                            -$
+                                            {commissionTotal.toLocaleString(
+                                              "es-AR",
+                                              { maximumFractionDigits: 2 },
+                                            )}
+                                          </td>
+                                          <td className="p-3 text-right font-bold">
+                                            $
+                                            {grossTotal.toLocaleString("es-AR")}
+                                          </td>
+                                        </tr>
 
-              {/* ✅ Totales (2 filas) */}
-              {viewItems.length > 0 ? (
-                <>
-                  <tr className="border-t bg-muted/20">
-                    <td className="p-3 font-medium" colSpan={3}>
-                      Total bruto
-                    </td>
-                    <td className="p-3 font-medium">
-                      ${discountTotalReal.toLocaleString("es-AR", { maximumFractionDigits: 2 })}
-                    </td>
-                    <td className="p-3 font-medium">
-                      ${commissionTotal.toLocaleString("es-AR", { maximumFractionDigits: 2 })}
-                    </td>
-                    <td className="p-3 font-bold">
-                      ${grossTotal.toLocaleString("es-AR")}
-                    </td>
-                  </tr>
+                                        <tr className="border-t bg-muted/20">
+                                          <td
+                                            className="p-3 font-medium"
+                                            colSpan={5}
+                                          >
+                                            = TOTAL VENTA (NETO)
+                                          </td>
+                                          <td className="p-3 text-right font-bold">
+                                            ${netSale.toLocaleString("es-AR")}
+                                          </td>
+                                        </tr>
 
-                  <tr className="border-t bg-muted/20">
-                    <td className="p-3 font-medium" colSpan={3}>
-                      Total
-                    </td>
-                    <td className="p-3 font-medium">
-                      -${discountTotalReal.toLocaleString("es-AR", { maximumFractionDigits: 2 })}
-                    </td>
-                    <td className="p-3 font-medium">
-                      -${commissionTotal.toLocaleString("es-AR", { maximumFractionDigits: 2 })}
-                    </td>
-                    <td className="p-3 font-bold">
-                      ${netTotal.toLocaleString("es-AR")}
-                    </td>
-                  </tr>
-                </>
-              ) : null}
-            </>
-          )
-        })()}
-      </tbody>
-    </table>
-  </div>
-</div>
+                                        <tr className="border-t bg-muted/20">
+                                          <td
+                                            className="p-3 font-medium"
+                                            colSpan={5}
+                                          >
+                                            = NETO EMPRESA
+                                          </td>
+                                          <td className="p-3 text-right font-bold">
+                                            $
+                                            {netCompany.toLocaleString(
+                                              "es-AR",
+                                              { maximumFractionDigits: 2 },
+                                            )}
+                                          </td>
+                                        </tr>
+                                      </>
+                                    );
+                                  })()}
+                                </tbody>
+                              </table>
+                            </div>
+                          </div>
+                        </>
+                      );
+                    })()}
                   </div>
                 );
               })()}

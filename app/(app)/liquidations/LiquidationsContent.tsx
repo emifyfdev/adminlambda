@@ -11,7 +11,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import type { LiquidationRow, LiquidationLineRow, LiquidationStatus } from "@/lib/repos/liquidations-repo"
-import { generateMonthlyLiquidation, getLiquidationDetail, setLiquidationStatus } from "@/lib/repos/liquidations-repo"
+import { generateMonthlyLiquidation, getLiquidationDetail, setLiquidationStatus,recalculateLiquidation } from "@/lib/repos/liquidations-repo"
 
 type SellerLite = { id: string; name?: string | null; display_name?: string | null; sales_team?: string | null }
 
@@ -102,6 +102,19 @@ export default function LiquidationsContent({
     }
   }
 
+  async function onRecalculate() {
+  if (!selectedLiqId) return
+  setSaving(true)
+  setErr(null)
+  try {
+    const res = await recalculateLiquidation(selectedLiqId)
+    if (!res.ok) return setErr(res.error)
+    await openDetail(selectedLiqId)
+  } finally {
+    setSaving(false)
+  }
+}
+
   async function moveStatus(next: LiquidationStatus) {
     if (!selectedLiqId) return
     setSaving(true)
@@ -161,6 +174,18 @@ export default function LiquidationsContent({
                   Bloquear
                 </Button>
               ) : null}
+
+              {selectedLiq?.status !== "locked" ? (
+  <Button
+    size="sm"
+    variant="outline"
+    className="gap-1.5"
+    onClick={onRecalculate}
+    disabled={saving}
+  >
+    Recalcular
+  </Button>
+) : null}
             </div>
           </div>
 
