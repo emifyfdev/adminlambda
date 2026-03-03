@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { useRouter } from "next/navigation"
 import { Bell, Search, ChevronDown, LogOut } from "lucide-react"
 import { Button } from "@/components/ui/button"
@@ -12,7 +12,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import { Avatar, AvatarFallback } from "@/components/ui/avatar"
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { createClient } from "@/lib/supabase/client"
 
 interface AppTopbarProps {
@@ -22,6 +22,43 @@ interface AppTopbarProps {
 export function AppTopbar({ title }: AppTopbarProps) {
   const router = useRouter()
   const [loggingOut, setLoggingOut] = useState(false)
+
+  const [user, setUser] = useState<any>(null)
+
+  useEffect(() => {
+    const supabase = createClient()
+
+    // 1) usuario actual
+    supabase.auth.getUser().then(({ data }) => setUser(data.user ?? null))
+
+    // 2) escuchar cambios de sesión (login/logout)
+    const { data: sub } = supabase.auth.onAuthStateChange((_event, session) => {
+      setUser(session?.user ?? null)
+    })
+
+    return () => {
+      sub.subscription.unsubscribe()
+    }
+  }, [])
+
+  const displayName = useMemo(() => {
+    return (
+      user?.user_metadata?.full_name ??
+      user?.user_metadata?.name ??
+      user?.email ??
+      "Admin"
+    )
+  }, [user])
+
+  const avatarUrl = useMemo(() => {
+    return (
+      user?.user_metadata?.avatar_url ?? // Google suele traer esto
+      user?.user_metadata?.picture ?? // a veces viene como picture
+      null
+    )
+  }, [user])
+
+  const initial = (displayName?.trim()?.[0] ?? "A").toUpperCase()
 
   async function handleLogout() {
     if (loggingOut) return
@@ -47,8 +84,8 @@ export function AppTopbar({ title }: AppTopbarProps) {
 
       <div className="flex items-center gap-4">
         <div className="relative hidden md:block">
-          <Search className="absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-          <Input placeholder="Search..." className="h-9 w-64 pl-9 text-sm" />
+          {/* <Search className="absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <Input placeholder="Search..." className="h-9 w-64 pl-9 text-sm" /> */}
         </div>
 
         <Button variant="ghost" size="icon" className="relative text-muted-foreground">
@@ -60,12 +97,20 @@ export function AppTopbar({ title }: AppTopbarProps) {
           <DropdownMenuTrigger asChild>
             <Button variant="ghost" className="flex items-center gap-2 px-2">
               <Avatar className="h-8 w-8">
+                {avatarUrl ? (
+                  <AvatarImage
+                    src={avatarUrl}
+                    alt={displayName}
+                    referrerPolicy="no-referrer"
+                  />
+                ) : null}
                 <AvatarFallback className="bg-primary/10 text-sm font-medium text-primary">
-                  A
+                  {initial}
                 </AvatarFallback>
               </Avatar>
+
               <span className="hidden text-sm font-medium text-card-foreground md:inline-block">
-                Admin
+                {displayName}
               </span>
               <ChevronDown className="h-4 w-4 text-muted-foreground" />
             </Button>

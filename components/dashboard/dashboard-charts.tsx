@@ -64,7 +64,7 @@ export function SalesRevenueChart({ data }: SalesRevenueChartProps) {
                 borderRadius: "6px",
                 fontSize: "12px",
               }}
-              formatter={(value: number, name: string) => [`$${value.toLocaleString()}`, name]}
+              formatter={(value: number, name: string) => [`${value.toLocaleString()}`, name]}
             />
             <Bar dataKey="sales" fill="var(--color-chart-2)" opacity={0.35} radius={[2, 2, 0, 0]} barSize={20} />
             <Line dataKey="revenue" stroke="var(--color-primary)" strokeWidth={2.5} dot={{ r: 3, fill: "var(--color-primary)" }} />
