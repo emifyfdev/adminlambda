@@ -1,16 +1,28 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import type { Product } from "@/lib/types";
 import { SALES_CHANNELS, type SalesChannel } from "@/lib/types";
-import { createSaleWithItems, type SaleStatus } from "@/lib/repos/sales-repo";
-import { getSaleDetail } from "@/lib/repos/sales-repo";
+import {
+  createSaleWithItems,
+  getSaleDetail,
+  updateSaleStatusAndAddItems,
+  type SaleStatus,
+} from "@/lib/repos/sales-repo";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
-
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import {
   Dialog,
   DialogContent,
@@ -26,7 +38,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { Plus, Trash2 } from "lucide-react";
+import { Plus, Trash2, Pencil } from "lucide-react";
 
 type SellerRowLite = {
   id: string;
@@ -66,7 +78,7 @@ type ItemForm = {
   product_id: string;
   qty: string;
   unit_price: string;
-  discount: string;
+  discount: string; // % en el form
 };
 
 function nowGMTMinus3ForDatetimeLocal() {
@@ -86,6 +98,8 @@ export default function SalesContent({
   sellers,
   commissionPlans,
 }: Props) {
+  const router = useRouter();
+
   const [open, setOpen] = useState(false);
   const [step, setStep] = useState<1 | 2 | 3>(1);
   const [saving, setSaving] = useState(false);
@@ -96,6 +110,14 @@ export default function SalesContent({
   const [viewLoading, setViewLoading] = useState(false);
   const [viewErr, setViewErr] = useState<string | null>(null);
   const [viewItems, setViewItems] = useState<any[]>([]);
+
+  // ✅ NUEVO: Edit
+  const [editOpen, setEditOpen] = useState(false);
+  const [editSaleId, setEditSaleId] = useState<string | null>(null);
+  const [editStatus, setEditStatus] = useState<SaleStatus>("confirmed");
+  const [editItems, setEditItems] = useState<ItemForm[]>([]);
+  const [editSaving, setEditSaving] = useState(false);
+  const [editErr, setEditErr] = useState<string | null>(null);
 
   // Step 1
   const [soldAt, setSoldAt] = useState(() => nowGMTMinus3ForDatetimeLocal());
@@ -160,9 +182,23 @@ export default function SalesContent({
     setOpen(true);
   }
 
+  // ✅ NUEVO: abrir edición
+  function openEdit(saleId: string) {
+    setEditErr(null);
+    setEditSaleId(saleId);
+
+    const sale = salesIniciales.find((x) => x.id === saleId);
+    setEditStatus(sale?.status ?? "confirmed");
+
+    // opcional: arrancamos sin ítems a agregar
+    setEditItems([]);
+    setEditOpen(true);
+  }
+
   const productById = useMemo(() => {
     return new Map(products.map((p) => [p.id, p]));
   }, [products]);
+
   const sellerById = useMemo(() => {
     return new Map(sellers.map((v) => [v.id, v]));
   }, [sellers]);
@@ -237,6 +273,21 @@ export default function SalesContent({
     return null;
   }
 
+  // ✅ NUEVO: validación items de edición (si agregás)
+  function validateEditItems() {
+    for (const it of editItems) {
+      if (!it.product_id) return "Seleccioná un producto.";
+      const qty = Number(it.qty);
+      if (!Number.isFinite(qty) || qty <= 0) return "Cantidad inválida.";
+      const unit = Number(it.unit_price);
+      if (!Number.isFinite(unit) || unit < 0) return "Precio inválido.";
+      const dp = Number(it.discount);
+      if (!Number.isFinite(dp) || dp < 0 || dp > 100)
+        return "Descuento % inválido (0 a 100).";
+    }
+    return null;
+  }
+
   async function next() {
     setErr(null);
     const v =
@@ -281,6 +332,38 @@ export default function SalesContent({
     );
   }
 
+  // ✅ NUEVO: helpers edición
+  function addEditItem() {
+    const first = products[0];
+    setEditItems((prev) => [
+      ...prev,
+      {
+        product_id: first?.id ?? "",
+        qty: "1",
+        unit_price: first ? String(first.list_price) : "",
+        discount: "0",
+      },
+    ]);
+  }
+
+  function removeEditItem(idx: number) {
+    setEditItems((prev) => prev.filter((_, i) => i !== idx));
+  }
+
+  function onChangeEditItem(idx: number, patch: Partial<ItemForm>) {
+    setEditItems((prev) =>
+      prev.map((it, i) => {
+        if (i !== idx) return it;
+        const next = { ...it, ...patch };
+        if (patch.product_id) {
+          const p = productById.get(patch.product_id);
+          if (p) next.unit_price = String(p.list_price);
+        }
+        return next;
+      }),
+    );
+  }
+
   async function onSave() {
     setErr(null);
     const v1 = validateStep1();
@@ -291,8 +374,6 @@ export default function SalesContent({
     try {
       const res = await createSaleWithItems({
         sale: {
-          // si tenés la función GMT-3 -> UTC, usala acá:
-          // sold_at: datetimeLocalGMT3ToUTCISOString(soldAt),
           sold_at: new Date(soldAt).toISOString(),
           seller_id: sellerId,
           customer_name: customerName.trim() || null,
@@ -325,11 +406,50 @@ export default function SalesContent({
     }
   }
 
+  // ✅ NUEVO: guardar edición
+  async function onSaveEdit() {
+    setEditErr(null);
+    if (!editSaleId) return;
+
+    const v = validateEditItems();
+    if (v) return setEditErr(v);
+
+    setEditSaving(true);
+    try {
+      const res = await updateSaleStatusAndAddItems({
+        saleId: editSaleId,
+        status: editStatus,
+        items: editItems.map((it) => {
+          const qty = Number(it.qty) || 0;
+          const unit = Number(it.unit_price) || 0;
+
+          // descuento % -> monto en DB
+          const pct = Math.max(0, Math.min(100, Number(it.discount) || 0));
+          const discountAmount = (pct / 100) * (qty * unit);
+
+          return {
+            product_id: it.product_id,
+            qty,
+            unit_price: unit,
+            discount: discountAmount,
+          };
+        }),
+      });
+
+      if (!res.ok) return setEditErr(res.error);
+
+      setEditOpen(false);
+      router.refresh();
+    } finally {
+      setEditSaving(false);
+    }
+  }
+
   return (
     <div className="p-6 space-y-6">
       <Card>
         <CardHeader className="flex flex-row items-center justify-between">
-          <CardTitle>Ventas</CardTitle>
+          <CardTitle>Registros</CardTitle>
           <Button
             onClick={openCreate}
             disabled={!products.length || !sellers.length}
@@ -343,8 +463,7 @@ export default function SalesContent({
           {!products.length ? (
             <Alert variant="destructive">
               <AlertDescription>
-                No hay productos cargados. Cargá productos antes de crear
-                ventas.
+                No hay productos cargados. Cargá productos antes de crear ventas.
               </AlertDescription>
             </Alert>
           ) : null}
@@ -352,85 +471,118 @@ export default function SalesContent({
           {!sellers.length ? (
             <Alert variant="destructive">
               <AlertDescription>
-                No hay vendedores cargados. Cargá vendedores antes de crear
-                ventas.
+                No hay vendedores cargados. Cargá vendedores antes de crear ventas.
               </AlertDescription>
             </Alert>
           ) : null}
 
           <div className="rounded-lg border overflow-hidden">
-            <table className="w-full text-sm">
-              <thead className="bg-muted/40">
-                <tr className="text-left">
-                  <th className="p-3">Fecha</th>
-                  <th className="p-3">Vendedor</th>
-                  <th className="p-3">Cliente</th>
-                  <th className="p-3">Canal</th>
-                  <th className="p-3">Estado</th>
-                  <th className="p-3">ID</th>
-                  <th className="p-3">Total</th>
-                  <th className="p-3 w-[120px]">Acciones</th>
-                </tr>
-              </thead>
-              <tbody>
-                {salesIniciales.map((s) => (
-                  <tr key={s.id} className="border-t">
-                    <td className="p-3">
-                      {new Date(s.sold_at).toLocaleString("es-AR")}
-                    </td>
-                    <td className="p-3">
-                      {(() => {
-                        const v = sellerById.get(s.seller_id);
-                        const name = v?.name ?? v?.display_name;
-                        return name ? (
-                          <span className="font-medium">
-                            {name}
-                            {v?.sales_team ? ` (${v.sales_team})` : ""}
-                          </span>
-                        ) : (
-                          "-"
-                        );
-                      })()}
-                    </td>
-                    <td className="p-3">{s.customer_name ?? "-"}</td>
-                    <td className="p-3">{s.channel ?? "-"}</td>
-                    <td className="p-3">{s.status}</td>
-                    <td className="p-3 font-mono text-xs">{s.id}</td>
-                    <td className="p-3 font-medium">
-                      {s.total_net != null
-                        ? `$${Number(s.total_net).toLocaleString("es-AR")}`
-                        : "-"}
-                    </td>
-                    <td className="p-3">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => openView(s.id)}
-                      >
-                        Ver
-                      </Button>
-                    </td>
-                  </tr>
-                ))}
+            <div className="max-h-[70vh] overflow-y-auto">
+              <Table className="w-full text-sm">
+                <TableHeader className="sticky top-0 z-10 bg-muted/40">
+                  <TableRow className="hover:bg-transparent">
+                    <TableHead className="p-3 text-left">Fecha</TableHead>
+                    <TableHead className="p-3 text-left">Vendedor</TableHead>
+                    <TableHead className="p-3 text-left">Cliente</TableHead>
+                    <TableHead className="p-3 text-left">Canal</TableHead>
+                    <TableHead className="p-3 text-left">Estado</TableHead>
+                    <TableHead className="p-3 text-left">ID</TableHead>
+                    <TableHead className="p-3 text-left">Total</TableHead>
+                    <TableHead className="p-3 text-left w-[120px]">
+                      Acciones
+                    </TableHead>
+                  </TableRow>
+                </TableHeader>
 
-                {salesIniciales.length === 0 ? (
-                  <tr>
-                    <td
-                      className="p-6 text-center text-muted-foreground"
-                      colSpan={8}
-                    >
-                      No hay ventas registradas.
-                    </td>
-                  </tr>
-                ) : null}
-              </tbody>
-            </table>
+                <TableBody>
+                  {salesIniciales.map((s) => (
+                    <TableRow key={s.id} className="border-t">
+                      <TableCell className="p-3 whitespace-nowrap">
+                        {new Date(s.sold_at).toLocaleString("es-AR")}
+                      </TableCell>
+
+                      <TableCell className="p-3">
+                        {(() => {
+                          const v = sellerById.get(s.seller_id);
+                          const name = v?.name ?? v?.display_name;
+                          return name ? (
+                            <span className="font-medium">
+                              {name}
+                              {v?.sales_team ? ` (${v.sales_team})` : ""}
+                            </span>
+                          ) : (
+                            "-"
+                          );
+                        })()}
+                      </TableCell>
+
+                      <TableCell className="p-3">
+                        {s.customer_name ?? "-"}
+                      </TableCell>
+                      <TableCell className="p-3">{s.channel ?? "-"}</TableCell>
+
+                      <TableCell className="p-3 whitespace-nowrap">
+                        <Badge
+                          variant={
+                            s.status === "confirmed" ? "default" : "secondary"
+                          }
+                        >
+                          {s.status}
+                        </Badge>
+                      </TableCell>
+
+                      <TableCell className="p-3 font-mono text-xs">
+                        {s.id}
+                      </TableCell>
+
+                      <TableCell className="p-3 font-medium whitespace-nowrap">
+                        {s.total_net != null
+                          ? `$${Number(s.total_net).toLocaleString("es-AR")}`
+                          : "-"}
+                      </TableCell>
+
+                      <TableCell className="p-3">
+                        <div className="flex gap-2">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => openView(s.id)}
+                          >
+                            Ver
+                          </Button>
+                          <Button
+                            variant="secondary"
+                            size="sm"
+                            onClick={() => openEdit(s.id)}
+                          >
+                            <Pencil className="mr-2 h-4 w-4" />
+                            Editar
+                          </Button>
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+
+                  {salesIniciales.length === 0 ? (
+                    <TableRow>
+                      <TableCell
+                        colSpan={8}
+                        className="p-6 text-center text-muted-foreground"
+                      >
+                        No hay ventas registradas.
+                      </TableCell>
+                    </TableRow>
+                  ) : null}
+                </TableBody>
+              </Table>
+            </div>
           </div>
         </CardContent>
       </Card>
 
+      {/* CREATE */}
       <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="max-w-3xl">
+        <DialogContent className="!w-[88vw] !max-w-4xl">
           <DialogHeader>
             <DialogTitle>Nueva venta</DialogTitle>
           </DialogHeader>
@@ -443,7 +595,6 @@ export default function SalesContent({
 
           {step === 1 ? (
             <div className="grid gap-4">
-              {/* fila 1 */}
               <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
                 <div className="grid gap-2">
                   <Label>Fecha y hora</Label>
@@ -474,7 +625,6 @@ export default function SalesContent({
                 </div>
               </div>
 
-              {/* fila 2 */}
               <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
                 <div className="grid gap-2">
                   <Label>Cliente</Label>
@@ -506,7 +656,6 @@ export default function SalesContent({
                 </div>
               </div>
 
-              {/* fila 3: vendedor full width */}
               <div className="grid gap-2">
                 <Label>Vendedor</Label>
                 <Select value={sellerId} onValueChange={setSellerId}>
@@ -524,7 +673,6 @@ export default function SalesContent({
                 </Select>
               </div>
 
-              {/* fila 4: comisión full width pero compacta */}
               <div className="grid gap-2">
                 <Label>Tipo de comisión</Label>
                 <Select
@@ -565,7 +713,6 @@ export default function SalesContent({
                     key={idx}
                     className="relative rounded-lg border p-3 pr-12"
                   >
-                    {/* Trash siempre a la derecha */}
                     <Button
                       variant="ghost"
                       size="icon"
@@ -576,10 +723,8 @@ export default function SalesContent({
                       <Trash2 className="h-4 w-4" />
                     </Button>
 
-                    {/* Grid del contenido (sin la columna del trash) */}
-                    <div className="grid grid-cols-12 gap-3 items-end">
-                      {/* Producto */}
-                      <div className="col-span-12 md:col-span-5 grid gap-2">
+                    <div className="grid gap-3 items-end md:grid-cols-[minmax(0,1fr)_80px_108px_80px]">
+                      <div className="grid gap-2 min-w-0">
                         <Label>Producto</Label>
                         <Select
                           value={it.product_id}
@@ -587,21 +732,26 @@ export default function SalesContent({
                             onChangeItem(idx, { product_id: v })
                           }
                         >
-                          <SelectTrigger className="w-full">
-                            <SelectValue placeholder="Seleccionar..." />
+                          <SelectTrigger className="w-full min-w-0">
+                            <SelectValue
+                              className="truncate"
+                              placeholder="Seleccionar..."
+                            />
                           </SelectTrigger>
-                          <SelectContent>
+
+                          <SelectContent className="min-w-[420px] max-w-[min(720px,92vw)]">
                             {products.map((p) => (
                               <SelectItem key={p.id} value={p.id}>
-                                {p.name}
+                                <span className="block truncate" title={p.name}>
+                                  {p.name}
+                                </span>
                               </SelectItem>
                             ))}
                           </SelectContent>
                         </Select>
                       </div>
 
-                      {/* Cant */}
-                      <div className="col-span-4 md:col-span-2 grid gap-2">
+                      <div className="grid gap-2">
                         <Label>Cant.</Label>
                         <Input
                           type="number"
@@ -615,8 +765,7 @@ export default function SalesContent({
                         />
                       </div>
 
-                      {/* Precio */}
-                      <div className="col-span-4 md:col-span-3 grid gap-2">
+                      <div className="grid gap-2">
                         <Label>Precio</Label>
                         <Input
                           value={Number(it.unit_price || 0).toLocaleString(
@@ -628,8 +777,7 @@ export default function SalesContent({
                         />
                       </div>
 
-                      {/* Desc */}
-                      <div className="col-span-4 md:col-span-2 grid gap-2">
+                      <div className="grid gap-2">
                         <Label>Desc. %</Label>
                         <Input
                           type="number"
@@ -687,9 +835,8 @@ export default function SalesContent({
 
               {selectedPlan ? (
                 <p className="text-xs text-muted-foreground">
-                  Comisión: {selectedPlan.name} (
-                  {pct(selectedPlan.default_rate)}) · Base:{" "}
-                  {selectedPlan.base_calc === "sale" ? "venta" : "margen"}
+                  Comisión: {selectedPlan.name} ({pct(selectedPlan.default_rate)})
+                  · Base: {selectedPlan.base_calc === "sale" ? "venta" : "margen"}
                 </p>
               ) : null}
             </div>
@@ -715,297 +862,425 @@ export default function SalesContent({
         </DialogContent>
       </Dialog>
 
-      <Dialog open={viewOpen} onOpenChange={setViewOpen}>
-    <DialogContent className="max-w-7xl w-[96vw] max-h-[92vh] overflow-y-auto overflow-x-hidden p-2 ">
+      {/* ✅ NUEVO: EDIT */}
+      <Dialog open={editOpen} onOpenChange={setEditOpen}>
+        <DialogContent className="!w-[88vw] !max-w-4xl">
           <DialogHeader>
-            <DialogTitle>Detalle de venta</DialogTitle>
+            <DialogTitle>Editar venta</DialogTitle>
           </DialogHeader>
 
-          {viewErr ? (
+          {editErr ? (
             <Alert variant="destructive">
-              <AlertDescription>{viewErr}</AlertDescription>
+              <AlertDescription>{editErr}</AlertDescription>
             </Alert>
           ) : null}
 
-          {viewLoading ? (
-            <div className="text-sm text-muted-foreground">Cargando...</div>
-          ) : (
-            <>
-              {(() => {
-                const sale = salesIniciales.find((x) => x.id === viewSaleId);
-                const seller = sellers.find((x) => x.id === sale?.seller_id);
-                const plan = commissionPlans.find(
-                  (x) => x.id === sale?.commission_plan_id,
-                );
+          <div className="grid gap-4">
+            <div className="grid gap-2">
+              <Label>Estado</Label>
+              <Select
+                value={editStatus}
+                onValueChange={(v) => setEditStatus(v as SaleStatus)}
+              >
+                <SelectTrigger className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="confirmed">Confirmada</SelectItem>
+                  <SelectItem value="pending">Pendiente</SelectItem>
+                  <SelectItem value="cancelled">Cancelada</SelectItem>
+                  <SelectItem value="returned">Devuelta</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
 
-                return (
-                  <div className="space-y-4">
-                    {/* Top: título + chips */}
-                    <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
-                      <div className="space-y-0.5">
-                        <div className="text-sm text-muted-foreground">
-                          Detalle
-                        </div>
-                        <div className="text-base font-semibold">
-                          {seller?.name ?? seller?.display_name ?? "Vendedor"}
-                          {seller?.sales_team ? ` (${seller.sales_team})` : ""}
-                        </div>
+            <div className="flex items-center justify-between">
+              <div className="text-sm text-muted-foreground">
+                Agregar ítems (opcional)
+              </div>
+              <Button
+                variant="outline"
+                onClick={addEditItem}
+                disabled={!products.length}
+              >
+                <Plus className="mr-2 h-4 w-4" />
+                Agregar ítem
+              </Button>
+            </div>
+
+            {editItems.length ? (
+              <div className="space-y-3">
+                {editItems.map((it, idx) => (
+                  <div
+                    key={idx}
+                    className="relative rounded-lg border p-3 pr-12"
+                  >
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => removeEditItem(idx)}
+                      className="absolute right-3 top-1/2 -translate-y-1/2"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+
+                    <div className="grid gap-3 items-end md:grid-cols-[minmax(0,1fr)_80px_108px_80px]">
+                      <div className="grid gap-2 min-w-0">
+                        <Label>Producto</Label>
+                        <Select
+                          value={it.product_id}
+                          onValueChange={(v) =>
+                            onChangeEditItem(idx, { product_id: v })
+                          }
+                        >
+                          <SelectTrigger className="w-full min-w-0">
+                            <SelectValue
+                              className="truncate"
+                              placeholder="Seleccionar..."
+                            />
+                          </SelectTrigger>
+                          <SelectContent className="min-w-[420px] max-w-[min(720px,92vw)]">
+                            {products.map((p) => (
+                              <SelectItem key={p.id} value={p.id}>
+                                <span className="block truncate" title={p.name}>
+                                  {p.name}
+                                </span>
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
                       </div>
 
-                      <div className="flex flex-wrap items-center gap-2">
-                        <Badge variant="secondary" className="rounded-full">
-                          {sale?.channel ?? "—"}
-                        </Badge>
-                        <Badge variant="secondary" className="rounded-full">
-                          {sale?.status ?? "—"}
-                        </Badge>
-                        <Badge variant="outline" className="rounded-full">
-                          {plan
-                            ? `${Math.round(Number(plan.default_rate) * 100)}%`
-                            : "—%"}
-                        </Badge>
-                        <Badge variant="outline" className="rounded-full">
-                          {plan?.name ?? "Sin plan"}
-                        </Badge>
+                      <div className="grid gap-2">
+                        <Label>Cant.</Label>
+                        <Input
+                          type="number"
+                          min={1}
+                          step={1}
+                          value={it.qty}
+                          onChange={(e) =>
+                            onChangeEditItem(idx, { qty: e.target.value })
+                          }
+                          className="w-full text-right tabular-nums"
+                        />
+                      </div>
+
+                      <div className="grid gap-2">
+                        <Label>Precio</Label>
+                        <Input
+                          value={Number(it.unit_price || 0).toLocaleString(
+                            "es-AR",
+                          )}
+                          readOnly
+                          disabled
+                          className="w-full text-right tabular-nums"
+                        />
+                      </div>
+
+                      <div className="grid gap-2">
+                        <Label>Desc. %</Label>
+                        <Input
+                          type="number"
+                          min={0}
+                          max={100}
+                          step={1}
+                          inputMode="numeric"
+                          value={it.discount}
+                          onChange={(e) =>
+                            onChangeEditItem(idx, { discount: e.target.value })
+                          }
+                          className="w-full text-right tabular-nums"
+                        />
                       </div>
                     </div>
-
-                    {/* KPIs compactos */}
-                    {(() => {
-                      const rate = plan ? Number(plan.default_rate) || 0 : 0;
-
-                      const rows = viewItems.map((it) => {
-                        const qty = Number(it.qty) || 0;
-                        const unit = Number(it.unit_price) || 0;
-                        const disc = Number(it.discount) || 0;
-                        const gross = qty * unit;
-                        const net = Math.max(0, gross - disc);
-                        return { qty, unit, disc, gross, net };
-                      });
-
-                      const grossTotal = rows.reduce((a, r) => a + r.gross, 0);
-                      const discountTotal = rows.reduce(
-                        (a, r) => a + r.disc,
-                        0,
-                      );
-                      const netSale =
-                        sale?.total_net != null
-                          ? Number(sale.total_net)
-                          : Math.max(0, grossTotal - discountTotal);
-                      const commissionTotal = Math.max(0, netSale * rate);
-                      const netCompany = Math.max(0, netSale - commissionTotal);
-
-                      return (
-                        <>
-                          <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
-                            <Card className="shadow-none">
-                              <CardContent className="p-4">
-                                <div className="text-xs text-muted-foreground">
-                                  Total venta
-                                </div>
-                                <div className="mt-1 text-2xl font-semibold">
-                                  ${netSale.toLocaleString("es-AR")}
-                                </div>
-                              </CardContent>
-                            </Card>
-
-                            <Card className="shadow-none">
-                              <CardContent className="p-4">
-                                <div className="text-xs text-muted-foreground">
-                                  Comisión
-                                </div>
-                                <div className="mt-1 text-2xl font-semibold">
-                                  $
-                                  {commissionTotal.toLocaleString("es-AR", {
-                                    maximumFractionDigits: 2,
-                                  })}
-                                </div>
-                              </CardContent>
-                            </Card>
-
-                            <Card className="shadow-none">
-                              <CardContent className="p-4">
-                                <div className="text-xs text-muted-foreground">
-                                  Neto empresa
-                                </div>
-                                <div className="mt-1 text-2xl font-semibold">
-                                  $
-                                  {netCompany.toLocaleString("es-AR", {
-                                    maximumFractionDigits: 2,
-                                  })}
-                                </div>
-                              </CardContent>
-                            </Card>
-                          </div>
-
-                          {/* Meta compacta */}
-                          <div className="grid grid-cols-1 gap-2 md:grid-cols-2 text-sm">
-                            <div className="flex items-center justify-between rounded-md border px-3 py-2">
-                              <span className="text-muted-foreground">
-                                Fecha
-                              </span>
-                              <span className="font-medium">
-                                {sale
-                                  ? new Date(sale.sold_at).toLocaleString(
-                                      "es-AR",
-                                    )
-                                  : "—"}
-                              </span>
-                            </div>
-
-                            <div className="flex items-center justify-between rounded-md border px-3 py-2">
-                              <span className="text-muted-foreground">
-                                Cliente
-                              </span>
-                              <span className="font-medium">
-                                {sale?.customer_name ?? "—"}
-                              </span>
-                            </div>
-                          </div>
-
-                          {/* Tabla linda (sin scroll-bar fea) */}
-                          <div className="rounded-lg border">
-                           <div className="rounded-lg border overflow-hidden bg-background">
-  <table className="w-full text-sm table-fixed">
-    <thead className="bg-muted/40">
-      <tr className="text-left">
-        <th className="p-3 w-[34%]">Producto</th>
-        <th className="p-3 w-[10%] text-right">Cant.</th>
-        <th className="p-3 w-[14%] text-right">Precio</th>
-        <th className="p-3 w-[14%] text-right">Desc</th>
-        <th className="p-3 w-[14%] text-right">Comisión</th>
-        <th className="p-3 w-[14%] text-right">Total</th>
-      </tr>
-    </thead>
-
-                                <tbody className="tabular-nums">
-                                  {(() => {
-                                    const netForWeights = rows.reduce(
-                                      (a, r) => a + r.net,
-                                      0,
-                                    );
-
-                                    // mostramos 1 fila por viewItem
-                                    return (
-                                      <>
-                                        {viewItems.map((it) => {
-                                          const qty = Number(it.qty) || 0;
-                                          const unit =
-                                            Number(it.unit_price) || 0;
-                                          const disc = Number(it.discount) || 0;
-                                          const gross = qty * unit;
-                                          const net = Math.max(0, gross - disc);
-
-                                          const w =
-                                            netForWeights > 0
-                                              ? net / netForWeights
-                                              : 0;
-                                          const commLine = commissionTotal * w;
-
-                                          return (
-                                            <tr
-                                              key={it.id}
-                                              className="border-t"
-                                            >
-                                              <td className="p-3 truncate">{it.product?.name ?? "-"}</td>
-                                              <td className="p-3 text-right">
-                                                {qty}
-                                              </td>
-                                              <td className="p-3 text-right ">
-                                                ${unit.toLocaleString("es-AR")}
-                                              </td>
-                                              <td className="p-3 text-right">
-                                                ${disc.toLocaleString("es-AR")}
-                                              </td>
-                                              <td className="p-3 text-right">
-                                                $
-                                                {commLine.toLocaleString(
-                                                  "es-AR",
-                                                  { maximumFractionDigits: 2 },
-                                                )}
-                                              </td>
-                                              <td className="p-3 text-right font-medium">
-                                                ${net.toLocaleString("es-AR")}
-                                              </td>
-                                            </tr>
-                                          );
-                                        })}
-
-                                        {/* Totales */}
-                                        <tr className="border-t bg-muted/20">
-                                          <td
-                                            className="p-3 font-medium "
-                                            colSpan={3}
-                                          >
-                                            TOTAL BRUTO
-                                          </td>
-                                          <td className="p-3 text-right font-medium">
-                                            -$
-                                            {discountTotal.toLocaleString(
-                                              "es-AR",
-                                            )}
-                                          </td>
-                                          <td className="p-3 text-right font-medium">
-                                            -$
-                                            {commissionTotal.toLocaleString(
-                                              "es-AR",
-                                              { maximumFractionDigits: 2 },
-                                            )}
-                                          </td>
-                                          <td className="p-3 text-right font-bold">
-                                            $
-                                            {grossTotal.toLocaleString("es-AR")}
-                                          </td>
-                                        </tr>
-
-                                        <tr className="border-t bg-muted/20">
-                                          <td
-                                            className="p-3 font-medium"
-                                            colSpan={5}
-                                          >
-                                            = TOTAL VENTA (NETO)
-                                          </td>
-                                          <td className="p-3 text-right font-bold">
-                                            ${netSale.toLocaleString("es-AR")}
-                                          </td>
-                                        </tr>
-
-                                        <tr className="border-t bg-muted/20">
-                                          <td
-                                            className="p-3 font-medium"
-                                            colSpan={5}
-                                          >
-                                            = NETO EMPRESA
-                                          </td>
-                                          <td className="p-3 text-right font-bold">
-                                            $
-                                            {netCompany.toLocaleString(
-                                              "es-AR",
-                                              { maximumFractionDigits: 2 },
-                                            )}
-                                          </td>
-                                        </tr>
-                                      </>
-                                    );
-                                  })()}
-                                </tbody>
-                              </table>
-                            </div>
-                          </div>
-                        </>
-                      );
-                    })()}
                   </div>
-                );
-              })()}
-            </>
-          )}
+                ))}
+              </div>
+            ) : null}
+          </div>
 
           <DialogFooter className="mt-4">
-            <Button variant="outline" onClick={() => setViewOpen(false)}>
-              Cerrar
+            <Button
+              variant="outline"
+              onClick={() => setEditOpen(false)}
+              disabled={editSaving}
+            >
+              Cancelar
+            </Button>
+            <Button onClick={onSaveEdit} disabled={editSaving}>
+              {editSaving ? "Guardando..." : "Guardar cambios"}
             </Button>
           </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* VIEW (sin cambios) */}
+      <Dialog open={viewOpen} onOpenChange={setViewOpen}>
+        <DialogContent className="!w-[88vw] !max-w-4xl max-h-[84vh] overflow-hidden p-3 sm:p-6">
+          <div className="max-h-[calc(84vh-2rem)] overflow-y-auto pr-1">
+            <DialogHeader>
+              <DialogTitle>Detalle de venta</DialogTitle>
+            </DialogHeader>
+
+            {viewErr ? (
+              <Alert variant="destructive">
+                <AlertDescription>{viewErr}</AlertDescription>
+              </Alert>
+            ) : null}
+
+            {viewLoading ? (
+              <div className="text-sm text-muted-foreground">Cargando...</div>
+            ) : (
+              <>
+                {(() => {
+                  const sale = salesIniciales.find((x) => x.id === viewSaleId);
+                  const seller = sellers.find((x) => x.id === sale?.seller_id);
+                  const plan = commissionPlans.find(
+                    (x) => x.id === sale?.commission_plan_id,
+                  );
+
+                  return (
+                    <div className="space-y-4">
+                      <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+                        <div className="space-y-0.5">
+                          <div className="text-sm text-muted-foreground">
+                            Detalle
+                          </div>
+                          <div className="text-base font-semibold">
+                            {seller?.name ?? seller?.display_name ?? "Vendedor"}
+                            {seller?.sales_team
+                              ? ` (${seller.sales_team})`
+                              : ""}
+                          </div>
+                        </div>
+
+                        <div className="flex flex-wrap items-center gap-2">
+                          <Badge variant="secondary" className="rounded-full">
+                            {sale?.channel ?? "—"}
+                          </Badge>
+                          <Badge variant="secondary" className="rounded-full">
+                            {sale?.status ?? "—"}
+                          </Badge>
+                          <Badge variant="outline" className="rounded-full">
+                            {plan
+                              ? `${Math.round(Number(plan.default_rate) * 100)}%`
+                              : "—%"}
+                          </Badge>
+                        </div>
+                      </div>
+
+                      {(() => {
+                        const rate = plan ? Number(plan.default_rate) || 0 : 0;
+
+                        const rows = viewItems.map((it) => {
+                          const qty = Number(it.qty) || 0;
+                          const unit = Number(it.unit_price) || 0;
+                          const disc = Number(it.discount) || 0;
+                          const gross = qty * unit;
+                          const net = Math.max(0, gross - disc);
+                          return { qty, unit, disc, gross, net };
+                        });
+
+                        const grossTotal = rows.reduce((a, r) => a + r.gross, 0);
+                        const discountTotal = rows.reduce((a, r) => a + r.disc, 0);
+                        const netSale =
+                          sale?.total_net != null
+                            ? Number(sale.total_net)
+                            : Math.max(0, grossTotal - discountTotal);
+                        const commissionTotal = Math.max(0, netSale * rate);
+                        const netCompany = Math.max(0, netSale - commissionTotal);
+
+                        return (
+                          <>
+                            <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+                              <Card className="shadow-none">
+                                <CardContent className="p-4">
+                                  <div className="text-xs text-muted-foreground">
+                                    Total venta
+                                  </div>
+                                  <div className="mt-1 text-2xl font-semibold">
+                                    ${netSale.toLocaleString("es-AR")}
+                                  </div>
+                                </CardContent>
+                              </Card>
+
+                              <Card className="shadow-none">
+                                <CardContent className="p-4">
+                                  <div className="text-xs text-muted-foreground">
+                                    Comisión
+                                  </div>
+                                  <div className="mt-1 text-2xl font-semibold">
+                                    $
+                                    {commissionTotal.toLocaleString("es-AR", {
+                                      maximumFractionDigits: 2,
+                                    })}
+                                  </div>
+                                </CardContent>
+                              </Card>
+
+                              <Card className="shadow-none">
+                                <CardContent className="p-4">
+                                  <div className="text-xs text-muted-foreground">
+                                    Neto empresa
+                                  </div>
+                                  <div className="mt-1 text-2xl font-semibold">
+                                    $
+                                    {netCompany.toLocaleString("es-AR", {
+                                      maximumFractionDigits: 2,
+                                    })}
+                                  </div>
+                                </CardContent>
+                              </Card>
+                            </div>
+
+                            <div className="grid grid-cols-1 gap-2 md:grid-cols-2 text-sm">
+                              <div className="flex items-center justify-between rounded-md border px-3 py-2">
+                                <span className="text-muted-foreground">
+                                  Fecha
+                                </span>
+                                <span className="font-medium">
+                                  {sale
+                                    ? new Date(sale.sold_at).toLocaleString(
+                                        "es-AR",
+                                      )
+                                    : "—"}
+                                </span>
+                              </div>
+
+                              <div className="flex items-center justify-between rounded-md border px-3 py-2">
+                                <span className="text-muted-foreground">
+                                  Cliente
+                                </span>
+                                <span className="font-medium">
+                                  {sale?.customer_name ?? "—"}
+                                </span>
+                              </div>
+                            </div>
+
+                            <div className="rounded-lg border bg-background overflow-hidden">
+                              <div className="w-full overflow-x-auto [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+                                <table className="w-full text-sm ">
+                                  <thead className="bg-muted/40">
+                                    <tr className="text-left">
+                                      <th className="p-3 w-[360px]">
+                                        Producto
+                                      </th>
+                                      <th className="p-3 w-[90px] text-right whitespace-nowrap">
+                                        Cant.
+                                      </th>
+                                      <th className="p-3 w-[140px] text-right whitespace-nowrap">
+                                        Precio
+                                      </th>
+                                      <th className="p-3 w-[140px] text-right whitespace-nowrap">
+                                        Desc
+                                      </th>
+                                      <th className="p-3 w-[140px] text-right whitespace-nowrap">
+                                        Comisión
+                                      </th>
+                                      <th className="p-3 w-[140px] text-right whitespace-nowrap">
+                                        Total
+                                      </th>
+                                    </tr>
+                                  </thead>
+
+                                  <tbody className="tabular-nums">
+                                    {(() => {
+                                      const netForWeights = rows.reduce(
+                                        (a, r) => a + r.net,
+                                        0,
+                                      );
+
+                                      return (
+                                        <>
+                                          {viewItems.map((it) => {
+                                            const qty = Number(it.qty) || 0;
+                                            const unit = Number(it.unit_price) || 0;
+                                            const disc = Number(it.discount) || 0;
+                                            const gross = qty * unit;
+                                            const net = Math.max(0, gross - disc);
+
+                                            const w =
+                                              netForWeights > 0
+                                                ? net / netForWeights
+                                                : 0;
+                                            const commLine = commissionTotal * w;
+
+                                            return (
+                                              <tr key={it.id} className="border-t">
+                                                <td className="p-3 truncate">
+                                                  {it.product?.name ?? "-"}
+                                                </td>
+                                                <td className="p-3 text-right">{qty}</td>
+                                                <td className="p-3 text-right ">
+                                                  ${unit.toLocaleString("es-AR")}
+                                                </td>
+                                                <td className="p-3 text-right">
+                                                  ${disc.toLocaleString("es-AR")}
+                                                </td>
+                                                <td className="p-3 text-right">
+                                                  $
+                                                  {commLine.toLocaleString("es-AR", {
+                                                    maximumFractionDigits: 2,
+                                                  })}
+                                                </td>
+                                                <td className="p-3 text-right font-medium">
+                                                  ${net.toLocaleString("es-AR")}
+                                                </td>
+                                              </tr>
+                                            );
+                                          })}
+
+                                          <tr className="border-t bg-muted/20">
+                                            <td className="p-3 font-medium " colSpan={3}>
+                                              TOTAL BRUTO
+                                            </td>
+                                            <td className="p-3 text-right font-medium">
+                                              -${discountTotal.toLocaleString("es-AR")}
+                                            </td>
+                                            <td className="p-3 text-right font-medium">
+                                              -$
+                                              {commissionTotal.toLocaleString("es-AR", {
+                                                maximumFractionDigits: 2,
+                                              })}
+                                            </td>
+                                            <td className="p-3 text-right font-bold">
+                                              ${grossTotal.toLocaleString("es-AR")}
+                                            </td>
+                                          </tr>
+
+                                          <tr className="border-t bg-muted/20">
+                                            <td className="p-3 font-medium" colSpan={5}>
+                                              = NETO EMPRESA
+                                            </td>
+                                            <td className="p-3 text-right font-bold">
+                                              $
+                                              {netCompany.toLocaleString("es-AR", {
+                                                maximumFractionDigits: 2,
+                                              })}
+                                            </td>
+                                          </tr>
+                                        </>
+                                      );
+                                    })()}
+                                  </tbody>
+                                </table>
+                              </div>
+                            </div>
+                          </>
+                        );
+                      })()}
+                    </div>
+                  );
+                })()}
+              </>
+            )}
+
+            <DialogFooter className="mt-4">
+              <Button variant="outline" onClick={() => setViewOpen(false)}>
+                Cerrar
+              </Button>
+            </DialogFooter>
+          </div>
         </DialogContent>
       </Dialog>
     </div>

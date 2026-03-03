@@ -16,15 +16,16 @@ import {
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
+import Image from "next/image"
 
 const navItems = [
   { href: "/dashboard", label: "Dashboard", icon: Home },
-  { href: "/sales", label: "Sales", icon: ShoppingCart },
-  { href: "/sellers", label: "Sellers", icon: Users },
-  { href: "/products", label: "Products", icon: Package },
-  { href: "/commission-plans", label: "Commission Plans", icon: FileText },
-  { href: "/liquidations", label: "Liquidations", icon: Wallet },
-  { href: "/audit", label: "Audit", icon: Shield },
+  { href: "/sales", label: "Ventas", icon: ShoppingCart },
+  { href: "/sellers", label: "Vendedores", icon: Users },
+  { href: "/products", label: "Productos", icon: Package },
+  { href: "/commission-plans", label: "Planes de Comisión", icon: FileText },
+  { href: "/liquidations", label: "Liquidaciones", icon: Wallet },
+  { href: "/audit", label: "Auditoría", icon: Shield },
 ]
 
 export function AppSidebar() {
@@ -38,17 +39,44 @@ export function AppSidebar() {
         collapsed ? "w-16" : "w-56"
       )}
     >
-      <div className="flex h-14 items-center justify-center border-b border-sidebar-border px-3">
-        <Button
-          variant="ghost"
-          size="icon"
-          className="text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
-          onClick={() => setCollapsed(!collapsed)}
-        >
-          <PanelLeft className="h-5 w-5" />
-          <span className="sr-only">Toggle sidebar</span>
-        </Button>
+<div className="flex h-14 items-center justify-center border-b border-sidebar-border px-3">
+  <Button
+    variant="ghost"
+    onClick={() => setCollapsed(!collapsed)}
+    className="h-10 px-2 rounded-md hover:bg-sidebar-accent"
+    aria-label="Toggle sidebar"
+  >
+    {collapsed ? (
+      <Image
+        src="/logo-icon.png"
+        alt="Logo"
+        width={28}
+        height={28}
+        className="object-contain"
+        priority
+      />
+    ) : (
+      <div className="flex items-center gap-2">
+        {/* <Image
+          src="/logo-icon.png"
+          alt="Logo"
+          width={28}
+          height={28}
+          className="object-contain"
+          priority
+        /> */}
+        <Image
+          src="/logo-text.png"
+          alt="Tu Empresa"
+          width={120}
+          height={24}
+          className="object-contain"
+          priority
+        />
       </div>
+    )}
+  </Button>
+</div>
 
       <TooltipProvider delayDuration={0}>
         <nav className="flex flex-1 flex-col gap-1 px-2 py-3">
