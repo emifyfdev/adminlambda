@@ -24,15 +24,15 @@ function createSupabaseMiddlewareClient(req: NextRequest) {
   return { supabase, res };
 }
 
-export async function middleware(req: NextRequest) {
+export async function proxy(req: NextRequest) {
   const pathname = req.nextUrl.pathname;
+
+  // Nunca bloquear el callback
   if (pathname.startsWith("/auth/callback")) return NextResponse.next();
+  // (Opcional sano) nunca interceptar logout
+  if (pathname.startsWith("/auth/logout")) return NextResponse.next();
 
   const { supabase, res } = createSupabaseMiddlewareClient(req);
-
-  const {
-    data: { session },
-  } = await supabase.auth.getSession();
 
   const protectedPaths = [
     "/dashboard",
@@ -47,23 +47,22 @@ export async function middleware(req: NextRequest) {
     (p) => pathname === p || pathname.startsWith(p + "/"),
   );
 
-  // // Si está logueado y va a /login -> dashboard
-  // if (session && pathname === "/login") {
-  //   const url = req.nextUrl.clone()
-  //   url.pathname = "/dashboard"
-  //   return NextResponse.redirect(url)
-  // }
+  // ✅ en middleware, usar getUser() (auth real)
+  const {
+    data: { user },
+    error: userErr,
+  } = await supabase.auth.getUser();
 
   // Si NO está logueado y va a rutas protegidas -> login
-  if (!session && isProtected) {
+  if ((!user || userErr) && isProtected) {
     const url = req.nextUrl.clone();
     url.pathname = "/login";
     return NextResponse.redirect(url);
   }
 
   // ✅ Whitelist SOLO con allowed_emails
-  if (session && isProtected) {
-    const email = session.user?.email;
+  if (user && isProtected) {
+    const email = user.email; // viene validado por getUser()
     if (!email) {
       const url = req.nextUrl.clone();
       url.pathname = "/login";
