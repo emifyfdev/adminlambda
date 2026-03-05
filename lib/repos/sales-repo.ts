@@ -108,7 +108,7 @@ export async function getSaleDetail(saleId: string) {
 
   const { data, error } = await supabase
     .from("sale_items")
-    .select("id, qty, unit_price, discount, product:products(name)")
+    .select("id, qty, unit_price, discount, product:products(name, cost)")
     .eq("sale_id", saleId)
     .order("id", { ascending: true })
 
