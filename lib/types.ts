@@ -125,3 +125,11 @@ export interface AuditLog {
 }
 
 
+export const PAYMENT_METHODS = [
+  "EFECTIVO",
+  "TRANSFERENCIA",
+  "MERCADO_PAGO",
+  "OTRO",
+] as const;
+
+export type PaymentMethod = (typeof PAYMENT_METHODS)[number];

@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { Product } from "@/lib/types";
 import { SALES_CHANNELS, type SalesChannel } from "@/lib/types";
+import { PAYMENT_METHODS, type PaymentMethod } from "@/lib/types";
 import {
   createSaleWithItems,
   getSaleDetail,
@@ -121,6 +122,24 @@ export default function SalesContent({
   const [editItems, setEditItems] = useState<ItemForm[]>([]);
   const [editSaving, setEditSaving] = useState(false);
   const [editErr, setEditErr] = useState<string | null>(null);
+
+  const [closeOpen, setCloseOpen] = useState(false);
+  const [closeSaleId, setCloseSaleId] = useState<string | null>(null);
+
+  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("EFECTIVO");
+  const [invoiceNumber, setInvoiceNumber] = useState("");
+  const [paid, setPaid] = useState(true);
+  const [closeSaving, setCloseSaving] = useState(false);
+  const [closeErr, setCloseErr] = useState<string | null>(null);
+
+  function openClose(saleId: string) {
+    setCloseErr(null);
+    setCloseSaleId(saleId);
+    setPaymentMethod("EFECTIVO");
+    setInvoiceNumber("");
+    setPaid(true);
+    setCloseOpen(true);
+  }
 
   // Step 1
   const [soldAt, setSoldAt] = useState(() => nowGMTMinus3ForDatetimeLocal());
@@ -567,9 +586,22 @@ export default function SalesContent({
                             variant="secondary"
                             size="sm"
                             onClick={() => openEdit(s.id)}
+                            disabled={s.status === "confirmed"}
                           >
                             <Pencil className="mr-2 h-4 w-4" />
-                            Editar
+                            Agregar item
+                          </Button>
+                          <Button
+                            variant="default"
+                            size="sm"
+                            onClick={() => openClose(s.id)}
+                            disabled={
+                              s.status === "confirmed" ||
+                              s.status === "cancelled" ||
+                              s.status === "returned"
+                            }
+                          >
+                            Cerrar
                           </Button>
                         </div>
                       </TableCell>
@@ -881,7 +913,7 @@ export default function SalesContent({
       <Dialog open={editOpen} onOpenChange={setEditOpen}>
         <DialogContent className="!w-[88vw] !max-w-4xl">
           <DialogHeader>
-            <DialogTitle>Editar venta</DialogTitle>
+            <DialogTitle></DialogTitle>
           </DialogHeader>
 
           {editErr ? (
@@ -891,7 +923,7 @@ export default function SalesContent({
           ) : null}
 
           <div className="grid gap-4">
-            <div className="grid gap-2">
+            {/* <div className="grid gap-2">
               <Label>Estado</Label>
               <Select
                 value={editStatus}
@@ -907,11 +939,11 @@ export default function SalesContent({
                   <SelectItem value="returned">Devuelta</SelectItem>
                 </SelectContent>
               </Select>
-            </div>
+            </div> */}
 
             <div className="flex items-center justify-between">
               <div className="text-sm text-muted-foreground">
-                Agregar ítems (opcional)
+                Selecciona el producto
               </div>
               <Button
                 variant="outline"
@@ -1094,7 +1126,9 @@ export default function SalesContent({
                           const gross = qty * unit;
                           const net = Math.max(0, gross - disc);
 
-                          const unitCost = Number(it.product?.cost ?? 0) || 0;
+                          const unitCost =
+                            Number(it.cost_at_sale ?? it.product?.cost ?? 0) ||
+                            0;
                           const cost = unitCost * qty;
 
                           return { it, qty, unit, disc, gross, net, cost };
@@ -1334,6 +1368,99 @@ export default function SalesContent({
               </Button>
             </DialogFooter>
           </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={closeOpen} onOpenChange={setCloseOpen}>
+        <DialogContent className="!w-[88vw] !max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Cerrar venta</DialogTitle>
+          </DialogHeader>
+
+          {closeErr ? (
+            <Alert variant="destructive">
+              <AlertDescription>{closeErr}</AlertDescription>
+            </Alert>
+          ) : null}
+
+          <div className="grid gap-4">
+            <div className="grid gap-2">
+              <Label>Modo de pago</Label>
+              <Select
+                value={paymentMethod}
+                onValueChange={(v) => setPaymentMethod(v as PaymentMethod)}
+              >
+                <SelectTrigger className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {PAYMENT_METHODS.map((m) => (
+                    <SelectItem key={m} value={m}>
+                      {m === "MERCADO_PAGO"
+                        ? "Mercado Pago"
+                        : m[0] + m.slice(1).toLowerCase()}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="grid gap-2">
+              <Label>N° factura / comprobante</Label>
+              <Input
+                value={invoiceNumber}
+                onChange={(e) => setInvoiceNumber(e.target.value)}
+                placeholder="Ej: A-0001-00001234"
+              />
+            </div>
+
+            <div className="flex items-center justify-between rounded-md border px-3 py-2">
+              <span className="text-sm text-muted-foreground">¿Pagado?</span>
+              <input
+                type="checkbox"
+                checked={paid}
+                onChange={(e) => setPaid(e.target.checked)}
+              />
+            </div>
+          </div>
+
+          <DialogFooter className="mt-4">
+            <Button
+              variant="outline"
+              onClick={() => setCloseOpen(false)}
+              disabled={closeSaving}
+            >
+              Cancelar
+            </Button>
+            <Button
+              onClick={async () => {
+                setCloseErr(null);
+                if (!closeSaleId) return;
+
+                setCloseSaving(true);
+                try {
+                  const res = await updateSaleStatusAndAddItems({
+                    saleId: closeSaleId,
+                    status: "confirmed",
+                    payment_method: paymentMethod,
+                    invoice_number: invoiceNumber.trim() || null,
+                    paid,
+                    // no pasamos items acá: cerrar ≠ agregar items
+                  });
+
+                  if (!res.ok) return setCloseErr(res.error);
+
+                  setCloseOpen(false);
+                  router.refresh();
+                } finally {
+                  setCloseSaving(false);
+                }
+              }}
+              disabled={closeSaving || !closeSaleId}
+            >
+              {closeSaving ? "Cerrando..." : "Cerrar venta"}
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </div>
