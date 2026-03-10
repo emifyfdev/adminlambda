@@ -56,31 +56,33 @@ export function DashboardContents({
       setErr(null);
       setLoading(true);
       try {
-const from = dateRange?.from ? new Date(dateRange.from) : undefined
-const toBase = (dateRange?.to ?? dateRange?.from) ? new Date(dateRange.to ?? dateRange.from!) : undefined
+        const from = dateRange?.from ? new Date(dateRange.from) : undefined;
+        const toBase = (dateRange?.to ?? dateRange?.from)
+          ? new Date(dateRange.to ?? dateRange.from!)
+          : undefined;
 
-let dateFrom: string | undefined
-let dateTo: string | undefined
+        let dateFrom: string | undefined;
+        let dateTo: string | undefined;
 
-if (from && toBase) {
-  // inicio del día local
-  from.setHours(0, 0, 0, 0)
+        if (from && toBase) {
+          // inicio del día local
+          from.setHours(0, 0, 0, 0);
 
-  // fin EXCLUSIVO: día siguiente 00:00 local
-  const toExclusive = new Date(toBase)
-  toExclusive.setHours(0, 0, 0, 0)
-  toExclusive.setDate(toExclusive.getDate() + 1)
+          // fin EXCLUSIVO: día siguiente 00:00 local
+          const toExclusive = new Date(toBase);
+          toExclusive.setHours(0, 0, 0, 0);
+          toExclusive.setDate(toExclusive.getDate() + 1);
 
-  dateFrom = from.toISOString()
-  dateTo = toExclusive.toISOString()
-}
+          dateFrom = from.toISOString();
+          dateTo = toExclusive.toISOString();
+        }
 
-const next = await getDashboardData({ period, seller, dateFrom, dateTo })
+        const next = await getDashboardData({ period, seller, dateFrom, dateTo });
         if (!alive) return;
         setData(next);
       } catch (e: any) {
         if (!alive) return;
-        setErr(e?.message ?? "Error cargando dashboard.");
+        setErr(e?.message ?? "Error al cargar el dashboard.");
       } finally {
         if (!alive) return;
         setLoading(false);
