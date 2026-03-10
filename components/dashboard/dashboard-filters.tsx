@@ -1,34 +1,34 @@
-"use client"
+"use client";
 
-import * as React from "react"
-import { Calendar, CalendarDays, Users, X } from "lucide-react"
-import type { DateRange } from "react-day-picker"
-import { Button } from "@/components/ui/button"
-import { Calendar as UICalendar } from "@/components/ui/calendar"
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import * as React from "react";
+import { Calendar, CalendarDays, Users, X } from "lucide-react";
+import type { DateRange } from "react-day-picker";
+import { Button } from "@/components/ui/button";
+import { Calendar as UICalendar } from "@/components/ui/calendar";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "@/components/ui/select"
+} from "@/components/ui/select";
 
 interface DashboardFiltersProps {
-  period: string
-  onPeriodChange: (value: string) => void
-  seller: string
-  onSellerChange: (value: string) => void
-  sellers: { id: string; name: string }[]
-  dateRange: DateRange | undefined
-  onDateRangeChange: (range: DateRange | undefined) => void
+  period: string;
+  onPeriodChange: (value: string) => void;
+  seller: string;
+  onSellerChange: (value: string) => void;
+  sellers: { id: string; name: string }[];
+  dateRange: DateRange | undefined;
+  onDateRangeChange: (range: DateRange | undefined) => void;
 }
 
 function formatRange(range: DateRange | undefined) {
-  if (!range?.from && !range?.to) return "Custom Date Range"
-  const from = range?.from ? range.from.toLocaleDateString("es-AR") : "—"
-  const to = range?.to ? range.to.toLocaleDateString("es-AR") : "—"
-  return `${from} - ${to}`
+  if (!range?.from && !range?.to) return "Rango de fechas";
+  const from = range?.from ? range.from.toLocaleDateString("es-AR") : "—";
+  const to = range?.to ? range.to.toLocaleDateString("es-AR") : "—";
+  return `${from} - ${to}`;
 }
 
 export function DashboardFilters({
@@ -49,11 +49,11 @@ export function DashboardFilters({
           <SelectValue />
         </SelectTrigger>
         <SelectContent>
-<SelectItem value="this-quarter">Este trimestre</SelectItem>
-<SelectItem value="this-month">Este mes</SelectItem>
-<SelectItem value="last-month">Mes pasado</SelectItem>
-<SelectItem value="last-quarter">Trimestre pasado</SelectItem>
-<SelectItem value="this-year">Este año</SelectItem>
+          <SelectItem value="this-quarter">Este trimestre</SelectItem>
+          <SelectItem value="this-month">Este mes</SelectItem>
+          <SelectItem value="last-month">Mes pasado</SelectItem>
+          <SelectItem value="last-quarter">Trimestre pasado</SelectItem>
+          <SelectItem value="this-year">Este año</SelectItem>
         </SelectContent>
       </Select>
 
@@ -71,13 +71,13 @@ export function DashboardFilters({
 
         <PopoverContent className="w-auto p-3" align="start">
           <div className="flex items-center justify-between gap-2 pb-2">
-            <div className="text-sm font-medium">Custom Date Range</div>
+            <div className="text-sm font-medium">Rango de fechas</div>
             <Button
               variant="ghost"
               size="icon"
               className="h-8 w-8"
               onClick={() => onDateRangeChange(undefined)}
-              title="Clear"
+              title="Limpiar"
             >
               <X className="h-4 w-4" />
             </Button>
@@ -100,7 +100,7 @@ export function DashboardFilters({
           <SelectValue />
         </SelectTrigger>
         <SelectContent>
-          <SelectItem value="all">All Sellers</SelectItem>
+          <SelectItem value="all">Todos los vendedores</SelectItem>
           {sellers.map((s) => (
             <SelectItem key={s.id} value={s.id}>
               {s.name}
@@ -109,5 +109,5 @@ export function DashboardFilters({
         </SelectContent>
       </Select>
     </div>
-  )
+  );
 }

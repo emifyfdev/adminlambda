@@ -309,7 +309,7 @@ export default function LiquidationsContent({
             <TabsList>
               <TabsTrigger value="summary">Resumen</TabsTrigger>
               <TabsTrigger value="sales">Ventas</TabsTrigger>
-              <TabsTrigger value="audit">Audit</TabsTrigger>
+              <TabsTrigger value="audit">Auditoría</TabsTrigger>
             </TabsList>
 
             <TabsContent value="summary" className="mt-4">
@@ -438,7 +438,7 @@ export default function LiquidationsContent({
                     <TableHead className="p-3 text-left">ID</TableHead>
                     <TableHead className="p-3 text-left">Período</TableHead>
                     <TableHead className="p-3 text-left">Frecuencia</TableHead>
-                    <TableHead className="p-3 text-left">Status</TableHead>
+                    <TableHead className="p-3 text-left">Estado</TableHead>
                     <TableHead className="p-3 text-left">Creado</TableHead>
                     <TableHead className="p-3 text-left">Acciones</TableHead>
                   </TableRow>

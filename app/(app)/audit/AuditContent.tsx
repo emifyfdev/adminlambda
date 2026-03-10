@@ -215,10 +215,10 @@ export default function AuditContent({ logsIniciales }: Props) {
                 <TableHeader className="sticky top-0 z-10 bg-muted/40">
                   <TableRow className="hover:bg-transparent">
                     <TableHead className="p-3 text-left">Fecha</TableHead>
-                    <TableHead className="p-3 text-left">Actor</TableHead>
+                    <TableHead className="p-3 text-left">Usuario</TableHead>
                     <TableHead className="p-3 text-left">Acción</TableHead>
                     <TableHead className="p-3 text-left">Entidad</TableHead>
-                    <TableHead className="p-3 text-left">Entity ID</TableHead>
+                    <TableHead className="p-3 text-left">ID de entidad</TableHead>
                     <TableHead className="p-3 text-left">Acciones</TableHead>
                   </TableRow>
                 </TableHeader>
@@ -348,9 +348,9 @@ export default function AuditContent({ logsIniciales }: Props) {
           {/* Diff */}
           <div className="space-y-2">
             <h4 className="flex items-center gap-2 text-sm font-semibold">
-              <span className="text-red-600">Before</span>
+              <span className="text-red-600">Antes</span>
               <ArrowRight className="h-3 w-3 text-muted-foreground" />
-              <span className="text-emerald-600">After</span>
+              <span className="text-emerald-600">Después</span>
             </h4>
 
             <div className="rounded-lg border border-border bg-muted/30">

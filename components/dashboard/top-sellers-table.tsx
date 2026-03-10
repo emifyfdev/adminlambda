@@ -55,7 +55,7 @@ export function TopSellersTable({ data }: { data: TopSeller[] }) {
     <Card className="border border-border shadow-sm">
       <CardHeader className="flex-row items-center justify-between pb-4">
         <CardTitle className="text-base font-bold text-card-foreground">
-          Top Sellers
+          Mejores vendedores
         </CardTitle>
         <div className="flex items-center gap-2">
           <Select value={team} onValueChange={setTeam}>
@@ -88,25 +88,25 @@ export function TopSellersTable({ data }: { data: TopSeller[] }) {
           <TableHeader>
             <TableRow className="hover:bg-transparent">
               <TableHead className="w-16 pl-6 text-xs font-semibold text-muted-foreground">
-                Rank
+                Puesto
               </TableHead>
               <TableHead className="text-xs font-semibold text-muted-foreground">
-                Seller
+                Vendedor
               </TableHead>
               <TableHead className="text-xs font-semibold text-muted-foreground">
-                Sales
+                Ventas
               </TableHead>
               <TableHead className="text-xs font-semibold text-muted-foreground">
-                Revenue <ChevronDown className="ml-0.5 inline h-3 w-3" />
+                Ingresos <ChevronDown className="ml-0.5 inline h-3 w-3" />
               </TableHead>
               <TableHead className="text-xs font-semibold text-muted-foreground">
-                Commissions <ChevronDown className="ml-0.5 inline h-3 w-3" />
+                Comisiones <ChevronDown className="ml-0.5 inline h-3 w-3" />
               </TableHead>
               <TableHead className="text-xs font-semibold text-muted-foreground">
-                Net Profit <ChevronDown className="ml-0.5 inline h-3 w-3" />
+                Ganancia neta <ChevronDown className="ml-0.5 inline h-3 w-3" />
               </TableHead>
               <TableHead className="pr-6 text-right text-xs font-semibold text-muted-foreground">
-                Actions
+                Acciones
               </TableHead>
             </TableRow>
           </TableHeader>
@@ -147,7 +147,7 @@ export function TopSellersTable({ data }: { data: TopSeller[] }) {
                     size="sm"
                     className="h-8 gap-1 bg-primary px-3 text-xs font-medium text-primary-foreground hover:bg-primary/90"
                   >
-                    View
+                    Ver
                     <ChevronDown className="h-3 w-3" />
                   </Button>
                 </TableCell>
