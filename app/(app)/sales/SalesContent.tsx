@@ -131,6 +131,10 @@ export default function SalesContent({
   const [paid, setPaid] = useState(true);
   const [closeSaving, setCloseSaving] = useState(false);
   const [closeErr, setCloseErr] = useState<string | null>(null);
+const [q, setQ] = useState("");
+const [statusFilter, setStatusFilter] = useState<"all" | SaleStatus>("all");
+const [sortBy, setSortBy] = useState<"date-desc" | "date-asc" | "total-desc" | "total-asc">("date-desc");
+
 
   function openClose(saleId: string) {
     setCloseErr(null);
@@ -224,6 +228,33 @@ export default function SalesContent({
   const sellerById = useMemo(() => {
     return new Map(sellers.map((v) => [v.id, v]));
   }, [sellers]);
+
+
+
+const filteredSales = useMemo(() => {
+  const s = q.trim().toLowerCase();
+  if (!s) return salesIniciales;
+
+  return salesIniciales.filter((sale) => {
+    const seller = sellerById.get(sale.seller_id);
+    const sellerName = `${seller?.name ?? ""} ${seller?.display_name ?? ""} ${seller?.sales_team ?? ""}`.trim();
+
+    const hay = [
+      sale.id,
+      sale.customer_name ?? "",
+      sale.channel ?? "",
+      sale.status ?? "",
+      sellerName,
+      new Date(sale.sold_at).toLocaleString("es-AR"),
+      sale.total_net != null ? String(sale.total_net) : "",
+    ]
+      .join(" ")
+      .toLowerCase();
+
+    return hay.includes(s);
+  });
+}, [salesIniciales, q, sellerById]);
+
 
   const totals = useMemo(() => {
     let revenue = 0; // neto (con descuento)
@@ -508,6 +539,17 @@ export default function SalesContent({
             </Alert>
           ) : null}
 
+<div className="flex items-center gap-3">
+  <Input
+    placeholder="Buscar por cliente, vendedor, canal o ID..."
+    value={q}
+    onChange={(e) => setQ(e.target.value)}
+    className="max-w-md"
+  />
+  <div className="text-sm text-muted-foreground">
+    {filteredSales.length} / {salesIniciales.length}
+  </div>
+</div>
           <div className="rounded-lg border overflow-hidden">
             <div className="max-h-[70vh] overflow-y-auto">
               <Table className="w-full text-sm">
@@ -527,7 +569,7 @@ export default function SalesContent({
                 </TableHeader>
 
                 <TableBody>
-                  {salesIniciales.map((s) => (
+                  {filteredSales.map((s) => (
                     <TableRow key={s.id} className="border-t">
                       <TableCell className="p-3 whitespace-nowrap">
                         {new Date(s.sold_at).toLocaleString("es-AR")}
@@ -608,7 +650,7 @@ export default function SalesContent({
                     </TableRow>
                   ))}
 
-                  {salesIniciales.length === 0 ? (
+                  {filteredSales.length === 0 ? (
                     <TableRow>
                       <TableCell
                         colSpan={8}
