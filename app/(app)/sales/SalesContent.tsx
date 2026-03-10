@@ -9,6 +9,7 @@ import {
   createSaleWithItems,
   getSaleDetail,
   updateSaleStatusAndAddItems,
+  refreshSalePrices,
   type SaleStatus,
 } from "@/lib/repos/sales-repo";
 import { Button } from "@/components/ui/button";
@@ -41,6 +42,7 @@ import {
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Plus, Trash2, Pencil } from "lucide-react";
 
+
 type SellerRowLite = {
   id: string;
   name?: string | null;
@@ -69,6 +71,7 @@ type SaleRow = {
   total_cost?: number | null;
   total_commission?: number | null;
   company_profit?: number | null;
+  invoice_number?: string | null;
 };
 
 type Props = {
@@ -131,10 +134,11 @@ export default function SalesContent({
   const [paid, setPaid] = useState(true);
   const [closeSaving, setCloseSaving] = useState(false);
   const [closeErr, setCloseErr] = useState<string | null>(null);
-const [q, setQ] = useState("");
-const [statusFilter, setStatusFilter] = useState<"all" | SaleStatus>("all");
-const [sortBy, setSortBy] = useState<"date-desc" | "date-asc" | "total-desc" | "total-asc">("date-desc");
-
+  const [q, setQ] = useState("");
+  const [statusFilter, setStatusFilter] = useState<"all" | SaleStatus>("all");
+  const [sortBy, setSortBy] = useState<
+    "date-desc" | "date-asc" | "total-desc" | "total-asc"
+  >("date-desc");
 
   function openClose(saleId: string) {
     setCloseErr(null);
@@ -148,7 +152,7 @@ const [sortBy, setSortBy] = useState<"date-desc" | "date-asc" | "total-desc" | "
   // Step 1
   const [soldAt, setSoldAt] = useState(() => nowGMTMinus3ForDatetimeLocal());
   const [customerName, setCustomerName] = useState("");
-  const [channel, setChannel] = useState<SalesChannel>("PUBLICO");
+  const [channel, setChannel] = useState<SalesChannel>("PÚBLICO");
   const [status, setStatus] = useState<SaleStatus>("pending");
   const [sellerId, setSellerId] = useState<string>(sellers[0]?.id ?? "");
 
@@ -190,7 +194,7 @@ const [sortBy, setSortBy] = useState<"date-desc" | "date-asc" | "total-desc" | "
     setStep(1);
     setSoldAt(nowGMTMinus3ForDatetimeLocal());
     setCustomerName("");
-    setChannel("PUBLICO");
+    setChannel("PÚBLICO");
     setStatus("pending");
     setSellerId(sellers[0]?.id ?? "");
     setCommissionPlanId(commissionPlans[0]?.id ?? "");
@@ -229,32 +233,30 @@ const [sortBy, setSortBy] = useState<"date-desc" | "date-asc" | "total-desc" | "
     return new Map(sellers.map((v) => [v.id, v]));
   }, [sellers]);
 
+  const filteredSales = useMemo(() => {
+    const s = q.trim().toLowerCase();
+    if (!s) return salesIniciales;
 
+    return salesIniciales.filter((sale) => {
+      const seller = sellerById.get(sale.seller_id);
+      const sellerName =
+        `${seller?.name ?? ""} ${seller?.display_name ?? ""} ${seller?.sales_team ?? ""}`.trim();
 
-const filteredSales = useMemo(() => {
-  const s = q.trim().toLowerCase();
-  if (!s) return salesIniciales;
+      const hay = [
+        sale.id,
+        sale.customer_name ?? "",
+        sale.channel ?? "",
+        sale.status ?? "",
+        sellerName,
+        new Date(sale.sold_at).toLocaleString("es-AR"),
+        sale.total_net != null ? String(sale.total_net) : "",
+      ]
+        .join(" ")
+        .toLowerCase();
 
-  return salesIniciales.filter((sale) => {
-    const seller = sellerById.get(sale.seller_id);
-    const sellerName = `${seller?.name ?? ""} ${seller?.display_name ?? ""} ${seller?.sales_team ?? ""}`.trim();
-
-    const hay = [
-      sale.id,
-      sale.customer_name ?? "",
-      sale.channel ?? "",
-      sale.status ?? "",
-      sellerName,
-      new Date(sale.sold_at).toLocaleString("es-AR"),
-      sale.total_net != null ? String(sale.total_net) : "",
-    ]
-      .join(" ")
-      .toLowerCase();
-
-    return hay.includes(s);
-  });
-}, [salesIniciales, q, sellerById]);
-
+      return hay.includes(s);
+    });
+  }, [salesIniciales, q, sellerById]);
 
   const totals = useMemo(() => {
     let revenue = 0; // neto (con descuento)
@@ -539,17 +541,17 @@ const filteredSales = useMemo(() => {
             </Alert>
           ) : null}
 
-<div className="flex items-center gap-3">
-  <Input
-    placeholder="Buscar por cliente, vendedor, canal o ID..."
-    value={q}
-    onChange={(e) => setQ(e.target.value)}
-    className="max-w-md"
-  />
-  <div className="text-sm text-muted-foreground">
-    {filteredSales.length} / {salesIniciales.length}
-  </div>
-</div>
+          <div className="flex items-center gap-3">
+            <Input
+              placeholder="Buscar por cliente, vendedor, canal o ID..."
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+              className="max-w-md"
+            />
+            <div className="text-sm text-muted-foreground">
+              {filteredSales.length} / {salesIniciales.length}
+            </div>
+          </div>
           <div className="rounded-lg border overflow-hidden">
             <div className="max-h-[70vh] overflow-y-auto">
               <Table className="w-full text-sm">
@@ -1133,7 +1135,7 @@ const filteredSales = useMemo(() => {
                       <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
                         <div className="space-y-0.5">
                           <div className="text-sm text-muted-foreground">
-                            Detalle
+                            Número de factura {sale?.invoice_number}
                           </div>
                           <div className="text-base font-semibold">
                             {seller?.name ?? seller?.display_name ?? "Vendedor"}
@@ -1142,7 +1144,20 @@ const filteredSales = useMemo(() => {
                               : ""}
                           </div>
                         </div>
-
+          {sale && sale.status !== "confirmed" ? (
+  <Button
+    size="sm"
+    variant="outline"
+    onClick={async () => {
+      const res = await refreshSalePrices(sale.id);
+      if (!res.ok) return setViewErr(res.error);
+      await openView(sale.id);
+      router.refresh();
+    }}
+  >
+    Actualizar precios
+  </Button>
+) : null}
                         <div className="flex flex-wrap items-center gap-2">
                           <Badge variant="secondary" className="rounded-full">
                             {sale?.channel ?? "—"}

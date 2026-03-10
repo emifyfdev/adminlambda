@@ -11,7 +11,7 @@ export type ProductCategory = (typeof PRODUCT_CATEGORIES)[number]
 export const SALES_TEAMS = ["GENERAL", "RITMO", "BIOLOGIA", "MEDICINA"] as const
 export type SalesTeam = (typeof SALES_TEAMS)[number]
 
-export const SALES_CHANNELS = ["PUBLICO", "ENVIO"] as const
+export const SALES_CHANNELS = ["PÚBLICO", "COMERCIO"] as const
 export type SalesChannel = (typeof SALES_CHANNELS)[number]
 
 // ── Core Types ──

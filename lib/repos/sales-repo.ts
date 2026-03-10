@@ -350,3 +350,74 @@ paid_at: input.paid ? new Date().toISOString() : undefined,
   revalidatePath("/dashboard");
   return { ok: true as const };
 }
+
+export async function refreshSalePrices(saleId: string) {
+  const supabase = await createClient()
+
+  // 1) traer venta y chequear estado
+  const { data: sale, error: saleErr } = await supabase
+    .from("sales")
+    .select("id, status")
+    .eq("id", saleId)
+    .single()
+
+  if (saleErr || !sale) return { ok: false as const, error: saleErr?.message ?? "Venta no existe." }
+  if (sale.status === "confirmed") return { ok: false as const, error: "La venta está confirmada. No se puede actualizar." }
+
+  // 2) traer items con product_id + discount actual
+  const { data: items, error: itemsErr } = await supabase
+    .from("sale_items")
+    .select("id, product_id, qty, discount")
+    .eq("sale_id", saleId)
+
+  if (itemsErr) return { ok: false as const, error: itemsErr.message }
+
+  const productIds = Array.from(new Set((items ?? []).map((i: any) => i.product_id).filter(Boolean)))
+  if (!productIds.length) return { ok: true as const }
+
+  // 3) traer precios actuales de productos
+  const { data: prods, error: prodsErr } = await supabase
+    .from("products")
+    .select("id, list_price")
+    .in("id", productIds)
+
+  if (prodsErr) return { ok: false as const, error: prodsErr.message }
+
+  const priceById = new Map((prods ?? []).map((p: any) => [p.id, Number(p.list_price) || 0]))
+
+  // 4) actualizar unit_price por item
+  const updates = (items ?? []).map((it: any) => ({
+    id: it.id,
+    unit_price: priceById.get(it.product_id) ?? 0,
+  }))
+
+  for (const u of updates) {
+    const { error } = await supabase.from("sale_items").update({ unit_price: u.unit_price }).eq("id", u.id)
+    if (error) return { ok: false as const, error: error.message }
+  }
+
+  // 5) recalcular totales y guardar en sales
+  let gross = 0
+  let discount = 0
+
+  for (const it of (items ?? []) as any[]) {
+    const qty = Number(it.qty) || 0
+    const unit = priceById.get(it.product_id) ?? 0
+    const disc = Number(it.discount) || 0 // monto ya guardado
+    gross += qty * unit
+    discount += disc
+  }
+
+  const net = Math.max(0, gross - discount)
+
+  const { error: upErr } = await supabase
+    .from("sales")
+    .update({ total_gross: gross, total_discount: discount, total_net: net })
+    .eq("id", saleId)
+
+  if (upErr) return { ok: false as const, error: upErr.message }
+
+  revalidatePath("/sales")
+  revalidatePath("/dashboard")
+  return { ok: true as const }
+}

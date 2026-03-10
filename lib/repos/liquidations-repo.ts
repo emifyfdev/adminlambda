@@ -5,11 +5,14 @@ import { createClient } from "@/lib/supabase/server";
 
 export type LiquidationStatus = "draft" | "review" | "finalized" | "locked";
 
+// ✅ agrego biweekly
+export type LiquidationFrequency = "mensual" | "quincenal" | "quarterly" | "custom";
+
 export type LiquidationRow = {
   id: string;
   period_start: string; // YYYY-MM-DD
   period_end: string; // YYYY-MM-DD
-  frequency: "monthly" | "quarterly" | "custom";
+  frequency: LiquidationFrequency;
   status: LiquidationStatus;
   created_at: string;
 };
@@ -95,18 +98,77 @@ export async function setLiquidationStatus(
   return { ok: true as const };
 }
 
-function ymdToDateRange(month: string) {
+function toYMD(d: Date) {
+  return d.toISOString().slice(0, 10);
+}
+
+function ymdToMonthlyRange(month: string) {
   // month: "YYYY-MM"
   const [y, m] = month.split("-").map(Number);
   const start = new Date(Date.UTC(y, m - 1, 1));
-  const end = new Date(Date.UTC(y, m, 0)); // último día del mes
-  const toYMD = (d: Date) => d.toISOString().slice(0, 10);
+  const end = new Date(Date.UTC(y, m, 0)); // último día del mes (UTC)
   return { period_start: toYMD(start), period_end: toYMD(end) };
 }
 
-export async function generateMonthlyLiquidation(input: { month: string }) {
+function ymdToBiweeklyRange(month: string, half: 1 | 2) {
+  // 1 => 01..15, 2 => 16..fin
+  const [y, m] = month.split("-").map(Number);
+  const lastDay = new Date(Date.UTC(y, m, 0)).getUTCDate();
+
+  const startDay = half === 1 ? 1 : 16;
+  const endDay = half === 1 ? 15 : lastDay;
+
+  const start = new Date(Date.UTC(y, m - 1, startDay));
+  const end = new Date(Date.UTC(y, m - 1, endDay));
+
+  return { period_start: toYMD(start), period_end: toYMD(end) };
+}
+
+function periodToStartEndISO(period_start: string, period_end: string) {
+  // usamos end EXCLUSIVO (día siguiente 00:00Z) para evitar líos de milisegundos
+  const startISO = `${period_start}T00:00:00.000Z`;
+
+  const endDate = new Date(`${period_end}T00:00:00.000Z`);
+  endDate.setUTCDate(endDate.getUTCDate() + 1);
+  const endExclusiveISO = endDate.toISOString();
+
+  return { startISO, endExclusiveISO };
+}
+
+async function ensureNoDuplicateLiquidation(
+  supabase: any,
+  period_start: string,
+  period_end: string,
+  frequency: LiquidationFrequency,
+) {
+  const { data: existing, error } = await supabase
+    .from("liquidations")
+    .select("id")
+    .eq("period_start", period_start)
+    .eq("period_end", period_end)
+    .eq("frequency", frequency)
+    .maybeSingle();
+
+  if (error) return { ok: false as const, error: error.message, existingId: null as string | null };
+  if (existing?.id) {
+    return { ok: false as const, error: "Ya existe una liquidación para ese período.", existingId: String(existing.id) };
+  }
+  return { ok: true as const, error: null as string | null, existingId: null as string | null };
+}
+
+/**
+ * ✅ NUEVO: Generar liquidación QUINCENAL
+ * - half: 1 => 01-15, 2 => 16-fin
+ */
+export async function generateBiweeklyLiquidation(input: {
+  month: string; // YYYY-MM
+  half: 1 | 2;
+}) {
   const supabase = await createClient();
-  const { period_start, period_end } = ymdToDateRange(input.month);
+  const { period_start, period_end } = ymdToBiweeklyRange(input.month, input.half);
+
+  const dup = await ensureNoDuplicateLiquidation(supabase, period_start, period_end, "quincenal");
+  if (!dup.ok) return { ok: false as const, error: dup.error };
 
   // 1) crear cabecera
   const { data: liq, error: liqErr } = await supabase
@@ -114,7 +176,7 @@ export async function generateMonthlyLiquidation(input: { month: string }) {
     .insert({
       period_start,
       period_end,
-      frequency: "monthly",
+      frequency: "quincenal",
       status: "draft",
     })
     .select("id")
@@ -129,65 +191,180 @@ export async function generateMonthlyLiquidation(input: { month: string }) {
 
   const liquidationId = liq.id as string;
 
-  // 2) traer ventas confirmadas del período con items+product cost y plan rate
+  const { startISO, endExclusiveISO } = periodToStartEndISO(period_start, period_end);
+
+  // 2) traer ventas confirmadas del período (tomando valores YA guardados en sales)
   const { data: sales, error: salesErr } = await supabase
     .from("sales")
     .select(
       `
-    id,
-    seller_id,
-    sold_at,
-    status,
-    total_gross,
-    total_discount,
-    total_net,
-    total_cost,
-    total_commission,
-    company_profit
-  `,
+        id,
+        seller_id,
+        sold_at,
+        status,
+        total_gross,
+        total_discount,
+        total_net,
+        total_cost,
+        total_commission,
+        company_profit
+      `,
     )
     .eq("status", "confirmed")
-    .gte("sold_at", `${period_start}T00:00:00.000Z`)
-    .lte("sold_at", `${period_end}T23:59:59.999Z`);
+    .gte("sold_at", startISO)
+    .lt("sold_at", endExclusiveISO);
 
   if (salesErr) return { ok: false as const, error: salesErr.message };
 
   // 3) acumular por seller
-const acc = new Map<string, any>();
+  const acc = new Map<string, any>();
 
-for (const s of (sales ?? []) as any[]) {
-  const sellerId = s.seller_id as string;
-  if (!sellerId) continue;
+  for (const s of (sales ?? []) as any[]) {
+    const sellerId = s.seller_id as string;
+    if (!sellerId) continue;
 
-  const gross = Number(s.total_gross) || 0;
-  const discount = Number(s.total_discount) || 0;
-  const net = Number(s.total_net) || 0;
+    const gross = Number(s.total_gross) || 0;
+    const discount = Number(s.total_discount) || 0;
+    const net = Number(s.total_net) || 0;
 
-  // IMPORTANTÍSIMO: si no está cerrado, estos pueden venir null
-  const cost = Number(s.total_cost) || 0;
-  const commission = Number(s.total_commission) || 0;
-  const profit = Number(s.company_profit) || (net - cost - commission);
+    // si confirmada y aun así viniera null, caemos a 0 (pero ideal: que confirmed siempre tenga estos campos completos)
+    const cost = Number(s.total_cost) || 0;
+    const commission = Number(s.total_commission) || 0;
+    const profit = Number(s.company_profit) || (net - cost - commission);
 
-  const prev = acc.get(sellerId);
-  if (!prev) {
-    acc.set(sellerId, {
-      seller_id: sellerId,
-      gross_total: gross,
-      discount_total: discount,
-      net_total: net,
-      cost_total: cost,
-      commission_total: commission,
-      company_profit: profit,
-    });
-  } else {
-    prev.gross_total += gross;
-    prev.discount_total += discount;
-    prev.net_total += net;
-    prev.cost_total += cost;
-    prev.commission_total += commission;
-    prev.company_profit += profit;
+    const prev = acc.get(sellerId);
+    if (!prev) {
+      acc.set(sellerId, {
+        seller_id: sellerId,
+        gross_total: gross,
+        discount_total: discount,
+        net_total: net,
+        cost_total: cost,
+        commission_total: commission,
+        company_profit: profit,
+      });
+    } else {
+      prev.gross_total += gross;
+      prev.discount_total += discount;
+      prev.net_total += net;
+      prev.cost_total += cost;
+      prev.commission_total += commission;
+      prev.company_profit += profit;
+    }
   }
+
+  const linesPayload = Array.from(acc.values()).map((l: any) => ({
+    liquidation_id: liquidationId,
+    seller_id: l.seller_id,
+    gross_total: l.gross_total,
+    discount_total: l.discount_total,
+    net_total: l.net_total,
+    cost_total: l.cost_total,
+    commission_total: l.commission_total,
+    company_profit: l.company_profit,
+  }));
+
+  if (linesPayload.length) {
+    const { error: linesErr } = await supabase
+      .from("liquidation_lines")
+      .insert(linesPayload);
+    if (linesErr) return { ok: false as const, error: linesErr.message };
+  }
+
+  revalidatePath("/liquidations");
+  return { ok: true as const, liquidationId };
 }
+
+/**
+ * (Tu función existente) Mensual
+ * ✅ le agrego anti-duplicado
+ * ✅ uso end EXCLUSIVO (lt) igual que quincena
+ */
+export async function generateMonthlyLiquidation(input: { month: string }) {
+  const supabase = await createClient();
+  const { period_start, period_end } = ymdToMonthlyRange(input.month);
+
+  const dup = await ensureNoDuplicateLiquidation(supabase, period_start, period_end, "mensual");
+  if (!dup.ok) return { ok: false as const, error: dup.error };
+
+  // 1) crear cabecera
+  const { data: liq, error: liqErr } = await supabase
+    .from("liquidations")
+    .insert({
+      period_start,
+      period_end,
+      frequency: "mensual",
+      status: "draft",
+    })
+    .select("id")
+    .single();
+
+  if (liqErr || !liq?.id) {
+    return {
+      ok: false as const,
+      error: liqErr?.message ?? "Error creando liquidación",
+    };
+  }
+
+  const liquidationId = liq.id as string;
+  const { startISO, endExclusiveISO } = periodToStartEndISO(period_start, period_end);
+
+  const { data: sales, error: salesErr } = await supabase
+    .from("sales")
+    .select(
+      `
+        id,
+        seller_id,
+        sold_at,
+        status,
+        total_gross,
+        total_discount,
+        total_net,
+        total_cost,
+        total_commission,
+        company_profit
+      `,
+    )
+    .eq("status", "confirmed")
+    .gte("sold_at", startISO)
+    .lt("sold_at", endExclusiveISO);
+
+  if (salesErr) return { ok: false as const, error: salesErr.message };
+
+  const acc = new Map<string, any>();
+
+  for (const s of (sales ?? []) as any[]) {
+    const sellerId = s.seller_id as string;
+    if (!sellerId) continue;
+
+    const gross = Number(s.total_gross) || 0;
+    const discount = Number(s.total_discount) || 0;
+    const net = Number(s.total_net) || 0;
+
+    const cost = Number(s.total_cost) || 0;
+    const commission = Number(s.total_commission) || 0;
+    const profit = Number(s.company_profit) || (net - cost - commission);
+
+    const prev = acc.get(sellerId);
+    if (!prev) {
+      acc.set(sellerId, {
+        seller_id: sellerId,
+        gross_total: gross,
+        discount_total: discount,
+        net_total: net,
+        cost_total: cost,
+        commission_total: commission,
+        company_profit: profit,
+      });
+    } else {
+      prev.gross_total += gross;
+      prev.discount_total += discount;
+      prev.net_total += net;
+      prev.cost_total += cost;
+      prev.commission_total += commission;
+      prev.company_profit += profit;
+    }
+  }
 
   const linesPayload = Array.from(acc.values()).map((l: any) => ({
     liquidation_id: liquidationId,
@@ -214,7 +391,6 @@ for (const s of (sales ?? []) as any[]) {
 export async function recalculateLiquidation(liquidationId: string) {
   const supabase = await createClient();
 
-  // 1) Traer cabecera (periodo)
   const { data: liq, error: liqErr } = await supabase
     .from("liquidations")
     .select("id, period_start, period_end, status, frequency")
@@ -237,7 +413,6 @@ export async function recalculateLiquidation(liquidationId: string) {
   const period_start = liq.period_start as string;
   const period_end = liq.period_end as string;
 
-  // 2) Borrar líneas actuales
   const { error: delErr } = await supabase
     .from("liquidation_lines")
     .delete()
@@ -245,63 +420,64 @@ export async function recalculateLiquidation(liquidationId: string) {
 
   if (delErr) return { ok: false as const, error: delErr.message };
 
-  // 3) Traer ventas confirmadas del período
-const { data: sales, error: salesErr } = await supabase
-  .from("sales")
-  .select(`
-    id,
-    seller_id,
-    sold_at,
-    status,
-    total_gross,
-    total_discount,
-    total_net,
-    total_cost,
-    total_commission,
-    company_profit
-  `)
-  .eq("status", "confirmed")
-  .gte("sold_at", `${period_start}T00:00:00.000Z`)
-  .lte("sold_at", `${period_end}T23:59:59.999Z`);
+  const { startISO, endExclusiveISO } = periodToStartEndISO(period_start, period_end);
+
+  const { data: sales, error: salesErr } = await supabase
+    .from("sales")
+    .select(
+      `
+        id,
+        seller_id,
+        sold_at,
+        status,
+        total_gross,
+        total_discount,
+        total_net,
+        total_cost,
+        total_commission,
+        company_profit
+      `,
+    )
+    .eq("status", "confirmed")
+    .gte("sold_at", startISO)
+    .lt("sold_at", endExclusiveISO);
 
   if (salesErr) return { ok: false as const, error: salesErr.message };
 
-  // 4) Recalcular acumulados por seller
-const acc = new Map<string, any>();
+  const acc = new Map<string, any>();
 
-for (const s of (sales ?? []) as any[]) {
-  const sellerId = s.seller_id as string;
-  if (!sellerId) continue;
+  for (const s of (sales ?? []) as any[]) {
+    const sellerId = s.seller_id as string;
+    if (!sellerId) continue;
 
-  const gross = Number(s.total_gross) || 0;
-  const discount = Number(s.total_discount) || 0;
-  const net = Number(s.total_net) || 0;
+    const gross = Number(s.total_gross) || 0;
+    const discount = Number(s.total_discount) || 0;
+    const net = Number(s.total_net) || 0;
 
-  // IMPORTANTÍSIMO: si no está cerrado, estos pueden venir null
-  const cost = Number(s.total_cost) || 0;
-  const commission = Number(s.total_commission) || 0;
-  const profit = Number(s.company_profit) || (net - cost - commission);
+    const cost = Number(s.total_cost) || 0;
+    const commission = Number(s.total_commission) || 0;
+    const profit = Number(s.company_profit) || (net - cost - commission);
 
-  const prev = acc.get(sellerId);
-  if (!prev) {
-    acc.set(sellerId, {
-      seller_id: sellerId,
-      gross_total: gross,
-      discount_total: discount,
-      net_total: net,
-      cost_total: cost,
-      commission_total: commission,
-      company_profit: profit,
-    });
-  } else {
-    prev.gross_total += gross;
-    prev.discount_total += discount;
-    prev.net_total += net;
-    prev.cost_total += cost;
-    prev.commission_total += commission;
-    prev.company_profit += profit;
+    const prev = acc.get(sellerId);
+    if (!prev) {
+      acc.set(sellerId, {
+        seller_id: sellerId,
+        gross_total: gross,
+        discount_total: discount,
+        net_total: net,
+        cost_total: cost,
+        commission_total: commission,
+        company_profit: profit,
+      });
+    } else {
+      prev.gross_total += gross;
+      prev.discount_total += discount;
+      prev.net_total += net;
+      prev.cost_total += cost;
+      prev.commission_total += commission;
+      prev.company_profit += profit;
+    }
   }
-}
 
   const payload = Array.from(acc.values()).map((l: any) => ({
     liquidation_id: liquidationId,

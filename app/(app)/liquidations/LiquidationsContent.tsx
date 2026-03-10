@@ -43,6 +43,7 @@ import type {
 } from "@/lib/repos/liquidations-repo";
 import {
   generateMonthlyLiquidation,
+  generateBiweeklyLiquidation,
   getLiquidationDetail,
   setLiquidationStatus,
   recalculateLiquidation,
@@ -53,6 +54,12 @@ type SellerLite = {
   name?: string | null;
   display_name?: string | null;
   sales_team?: string | null;
+};
+const statusLabels: Record<LiquidationStatus, string> = {
+  draft: "Borrador",
+  review: "Revisión",
+  finalized: "Finalizada",
+  locked: "Bloqueada",
 };
 
 const statusColors: Record<LiquidationStatus, string> = {
@@ -96,6 +103,9 @@ export default function LiquidationsContent({
 
   const [generateOpen, setGenerateOpen] = useState(false);
   const [genMonth, setGenMonth] = useState(monthOptions()[0]?.value ?? "");
+  const [genType, setGenType] = useState<"mensual" | "quincenal">("mensual"); // ✅
+  const [genHalf, setGenHalf] = useState<1 | 2>(1); // ✅ 1=01-15, 2=16-fin
+
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
@@ -142,12 +152,20 @@ export default function LiquidationsContent({
   async function onGenerate() {
     setErr(null);
     if (!genMonth) return setErr("Seleccioná un mes.");
+
     setSaving(true);
     try {
-      const res = await generateMonthlyLiquidation({ month: genMonth });
+      const res =
+        genType === "mensual"
+          ? await generateMonthlyLiquidation({ month: genMonth })
+          : await generateBiweeklyLiquidation({
+              month: genMonth,
+              half: genHalf,
+            });
+
       if (!res.ok) return setErr(res.error);
+
       setGenerateOpen(false);
-      // Abrimos la liquidación recién creada
       await openDetail(res.liquidationId);
     } finally {
       setSaving(false);
@@ -206,7 +224,7 @@ export default function LiquidationsContent({
                   : "Liquidación"}
               </h2>
               <p className="text-xs text-muted-foreground">
-                Frecuencia: mensual · Solo ventas confirmadas
+                Frecuencia: {selectedLiq?.frequency} · Solo ventas confirmadas
               </p>
             </div>
 
@@ -216,7 +234,7 @@ export default function LiquidationsContent({
                   variant="secondary"
                   className={`${statusColors[selectedLiq.status]}`}
                 >
-                  {selectedLiq.status}
+                  {statusLabels[selectedLiq.status]}
                 </Badge>
               ) : null}
 
@@ -276,8 +294,8 @@ export default function LiquidationsContent({
             </Card>
 
             <Card className="border border-border">
-              <CardContent className="p-4 text-center">
-                <p className="text-2xl font-bold">
+              <CardContent className="p-4 text-center ">
+                <p className="text-2xl font-bold text-red-600">
                   {fmtMoney(kpis.totalCommission)}
                 </p>
                 <p className="text-xs text-muted-foreground">Comisiones</p>
@@ -293,7 +311,7 @@ export default function LiquidationsContent({
               </CardContent>
             </Card>
 
-            <Card className="border border-border">
+            <Card className="border border-border ">
               <CardContent className="p-4 text-center">
                 <p className="text-2xl font-bold">
                   {fmtMoney(kpis.totalProfit)}
@@ -318,15 +336,15 @@ export default function LiquidationsContent({
                   <Table>
                     <TableHeader>
                       <TableRow className="hover:bg-transparent">
-                        <TableHead className="pl-4 text-xs">Vendedor</TableHead>
-                        <TableHead className="text-xs">Bruto</TableHead>
-                        <TableHead className="text-xs">Descuento</TableHead>
-                        <TableHead className="text-xs">Neto</TableHead>
-                        <TableHead className="text-xs">Comisión</TableHead>
-                        <TableHead className="text-xs">
+                        <TableHead className="p-3 text-left">Vendedor</TableHead>
+                        <TableHead className="p-3 text-left">Bruto</TableHead>
+                        <TableHead className="p-3 text-left">Descuento</TableHead>
+                        <TableHead className="p-3 text-left">Neto</TableHead>
+                        <TableHead className="p-3 text-left">Comisión</TableHead>
+                        <TableHead className="p-3 text-left ">
                           Ganancia Empresa
                         </TableHead>
-                        <TableHead className="pr-4 text-xs">Payout</TableHead>
+                        <TableHead className="pr-4 text-sm">Liquidar</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -353,10 +371,10 @@ export default function LiquidationsContent({
                             <TableCell className="text-sm">
                               {fmtMoney(Number(l.commission_total))}
                             </TableCell>
-                            <TableCell className="text-sm">
+                            <TableCell className="p-3 ">
                               {fmtMoney(Number(l.company_profit))}
                             </TableCell>
-                            <TableCell className="pr-4 text-sm font-semibold">
+                            <TableCell className="text-red-600 pr-4 text-sm font-semibold">
                               {fmtMoney(payout)}
                             </TableCell>
                           </TableRow>
@@ -415,7 +433,11 @@ export default function LiquidationsContent({
           <Button
             size="sm"
             className="h-9 gap-1.5"
-            onClick={() => setGenerateOpen(true)}
+            onClick={() => {
+              setGenType("mensual");
+              setGenHalf(1);
+              setGenerateOpen(true);
+            }}
           >
             <Plus className="h-4 w-4" />
             Generar liquidación
@@ -464,7 +486,7 @@ export default function LiquidationsContent({
                           variant="secondary"
                           className={`text-xs ${statusColors[liq.status]}`}
                         >
-                          {liq.status}
+                          {statusLabels[liq.status]}
                         </Badge>
                       </TableCell>
 
@@ -505,13 +527,31 @@ export default function LiquidationsContent({
       <Dialog open={generateOpen} onOpenChange={setGenerateOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Generar liquidación mensual</DialogTitle>
+            <DialogTitle>Generar liquidación</DialogTitle>
             <DialogDescription>
-              Se calculará usando ventas confirmadas del mes.
+              Se calculará usando ventas confirmadas del período.
             </DialogDescription>
           </DialogHeader>
 
           <div className="space-y-4">
+            {/* Tipo */}
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Tipo</label>
+              <Select
+                value={genType}
+                onValueChange={(v) => setGenType(v as any)}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Seleccionar..." />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="mensual">Mensual</SelectItem>
+                  <SelectItem value="quincenal">Quincenal</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            {/* Mes */}
             <div className="space-y-2">
               <label className="text-sm font-medium">Mes</label>
               <Select value={genMonth} onValueChange={setGenMonth}>
@@ -527,6 +567,25 @@ export default function LiquidationsContent({
                 </SelectContent>
               </Select>
             </div>
+
+            {/* Quincena (solo si es quincenal) */}
+            {genType === "quincenal" ? (
+              <div className="space-y-2">
+                <label className="text-sm font-medium">Quincena</label>
+                <Select
+                  value={String(genHalf)}
+                  onValueChange={(v) => setGenHalf((Number(v) as 1 | 2) ?? 1)}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Seleccionar..." />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="1">1 al 15</SelectItem>
+                    <SelectItem value="2">16 al fin</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            ) : null}
           </div>
 
           <DialogFooter>
