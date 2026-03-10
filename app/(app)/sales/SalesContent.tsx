@@ -589,7 +589,7 @@ export default function SalesContent({
                             disabled={s.status === "confirmed"}
                           >
                             <Pencil className="mr-2 h-4 w-4" />
-                            Agregar item
+                            Agregar ítem
                           </Button>
                           <Button
                             variant="default"
@@ -1445,7 +1445,7 @@ export default function SalesContent({
                     payment_method: paymentMethod,
                     invoice_number: invoiceNumber.trim() || null,
                     paid,
-                    // no pasamos items acá: cerrar ≠ agregar items
+                    // no pasamos items acá: cerrar ≠ Agregar ítems
                   });
 
                   if (!res.ok) return setCloseErr(res.error);

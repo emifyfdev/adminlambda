@@ -189,7 +189,7 @@ const filteredAndSorted = useMemo(() => {
     <div className="p-6 space-y-6">
       <Card>
         <CardHeader className="flex flex-row items-center justify-between">
-          <CardTitle>Registro</CardTitle>
+          <CardTitle>Registros</CardTitle>
           <Button onClick={openCreate}>
             <Plus className="mr-2 h-4 w-4" />
             Nuevo producto

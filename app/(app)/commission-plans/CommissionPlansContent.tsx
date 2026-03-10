@@ -161,7 +161,7 @@ export default function CommissionPlansContent({ plansIniciales }: Props) {
             </Button>
           </CardHeader>
           <CardContent className="text-sm text-muted-foreground">
-            Usá default_rate en decimal (0.25 = 25%).
+            Colocá el valor en decimal (0.25 = 25%).
           </CardContent>
         </Card>
       </div>
@@ -263,7 +263,7 @@ export default function CommissionPlansContent({ plansIniciales }: Props) {
             </div>
 
             <div className="grid gap-2">
-              <Label>Default rate (0 a 1)</Label>
+              <Label>Valor (0 a 1)</Label>
               <Input
                 inputMode="decimal"
                 value={form.default_rate}
