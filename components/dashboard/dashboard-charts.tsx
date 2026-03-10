@@ -3,16 +3,13 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import {
   Bar,
-  BarChart,
   CartesianGrid,
   Line,
-  LineChart,
   ComposedChart,
   ResponsiveContainer,
   Tooltip,
   XAxis,
   YAxis,
-  Legend,
   Area,
   AreaChart,
 } from "recharts"
@@ -26,19 +23,19 @@ export function SalesRevenueChart({ data }: SalesRevenueChartProps) {
     <Card className="flex-1 border border-border shadow-sm">
       <CardHeader className="pb-2">
         <CardTitle className="text-base font-semibold text-card-foreground">
-          <span className="font-bold">{"Sales & Revenue"}</span>{" "}
-          <span className="font-normal text-muted-foreground">Over Time</span>
+          <span className="font-bold">{"Ventas e ingresos"}</span>{" "}
+          <span className="font-normal text-muted-foreground">en el tiempo</span>
         </CardTitle>
       </CardHeader>
       <CardContent className="pt-0">
         <div className="mb-2 flex items-center gap-4 text-xs text-muted-foreground">
           <span className="flex items-center gap-1.5">
             <span className="inline-block h-0.5 w-4 rounded bg-primary" />
-            Revenue
+            Ingresos
           </span>
           <span className="flex items-center gap-1.5">
             <span className="inline-block h-3 w-3 rounded-sm bg-chart-2/40" />
-            Sales
+            Ventas
           </span>
         </div>
         <ResponsiveContainer width="100%" height={260}>
@@ -84,15 +81,15 @@ export function CommissionsChart({ data }: CommissionsChartProps) {
     <Card className="flex-1 border border-border shadow-sm">
       <CardHeader className="pb-2">
         <CardTitle className="text-base font-semibold text-card-foreground">
-          <span className="font-bold">Commissions</span>{" "}
-          <span className="font-normal text-muted-foreground">Over Time</span>
+          <span className="font-bold">Comisiones</span>{" "}
+          <span className="font-normal text-muted-foreground">en el tiempo</span>
         </CardTitle>
       </CardHeader>
       <CardContent className="pt-0">
         <div className="mb-2 flex items-center gap-4 text-xs text-muted-foreground">
           <span className="flex items-center gap-1.5">
             <span className="inline-block h-0.5 w-4 rounded bg-chart-3" />
-            Commissions
+            Comisiones
           </span>
         </div>
         <ResponsiveContainer width="100%" height={260}>
@@ -118,7 +115,7 @@ export function CommissionsChart({ data }: CommissionsChartProps) {
                 borderRadius: "6px",
                 fontSize: "12px",
               }}
-              formatter={(value: number) => [`$${value.toLocaleString()}`, "Commissions"]}
+              formatter={(value: number) => [`$${value.toLocaleString()}`, "Comisiones"]}
             />
             <Area
               dataKey="commissions"
