@@ -1781,6 +1781,7 @@ export default function SalesContent({
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      
     </div>
   );
 }
