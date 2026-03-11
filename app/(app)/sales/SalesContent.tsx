@@ -10,6 +10,7 @@ import {
   getSaleDetail,
   updateSaleStatusAndAddItems,
   refreshSalePrices,
+  assignBudgetNumber,
   type SaleStatus,
 } from "@/lib/repos/sales-repo";
 import { Button } from "@/components/ui/button";
@@ -40,8 +41,17 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { Plus, Trash2, Pencil } from "lucide-react";
+import {
+  Plus,
+  Trash2,
+  Pencil,
+  NotepadText,
+  Eye,
+  LockKeyhole,
+} from "lucide-react";
 
+import jsPDF from "jspdf";
+import autoTable from "jspdf-autotable";
 
 type SellerRowLite = {
   id: string;
@@ -72,6 +82,8 @@ type SaleRow = {
   total_commission?: number | null;
   company_profit?: number | null;
   invoice_number?: string | null;
+  budget_number?: number | null;
+  budget_issued_at?: string | null;
 };
 
 type Props = {
@@ -98,6 +110,15 @@ function nowGMTMinus3ForDatetimeLocal() {
 function pct(rate: number) {
   return `${Math.round((Number(rate) || 0) * 100)}%`;
 }
+
+function formatMoney(value: number) {
+  return `$${Number(value || 0).toLocaleString("es-AR", {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 2,
+  })}`;
+}
+
+
 
 export default function SalesContent({
   salesIniciales,
@@ -139,6 +160,9 @@ export default function SalesContent({
   const [sortBy, setSortBy] = useState<
     "date-desc" | "date-asc" | "total-desc" | "total-asc"
   >("date-desc");
+
+  const [budgetLoadingId, setBudgetLoadingId] = useState<string | null>(null);
+  const [budgetErr, setBudgetErr] = useState<string | null>(null);
 
   function openClose(saleId: string) {
     setCloseErr(null);
@@ -223,6 +247,209 @@ export default function SalesContent({
     // opcional: arrancamos sin ítems a agregar
     setEditItems([]);
     setEditOpen(true);
+  }
+
+  async function loadImageAsDataUrl(url: string): Promise<string> {
+    const res = await fetch(url);
+    const blob = await res.blob();
+
+    return await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onloadend = () => resolve(String(reader.result));
+      reader.onerror = reject;
+      reader.readAsDataURL(blob);
+    });
+  }
+
+  async function handleGenerateBudgetPdf(saleId: string) {
+    setBudgetErr(null);
+    setBudgetLoadingId(saleId);
+
+    try {
+      const sale = salesIniciales.find((x) => x.id === saleId);
+      if (!sale) {
+        setBudgetErr("No se encontró la venta.");
+        return;
+      }
+
+      const seller = sellers.find((x) => x.id === sale.seller_id);
+
+      const res = await getSaleDetail(saleId);
+      if (!res.ok) {
+        setBudgetErr(res.error);
+        return;
+      }
+
+      const detailItems = res.items ?? [];
+
+      const saleDate = new Date(sale.sold_at);
+      const expirationDate = new Date(saleDate);
+      expirationDate.setDate(expirationDate.getDate() + 15);
+
+      const rows = detailItems.map((it: any) => {
+        const qty = Number(it.qty) || 0;
+        const unit = Number(it.unit_price) || 0;
+        const bonifAmount = Number(it.discount) || 0;
+        const gross = qty * unit;
+        const bonifPct = gross > 0 ? (bonifAmount / gross) * 100 : 0;
+        const total = Math.max(0, gross - bonifAmount);
+
+        return {
+          product: it.product?.name ?? "Producto",
+          qty,
+          unit,
+          bonifAmount,
+          bonifPct,
+          total,
+        };
+      });
+
+      const totalFinal = rows.reduce((acc, r) => acc + r.total, 0);
+
+      const budgetRes = await assignBudgetNumber(sale.id);
+      if (!budgetRes.ok) {
+        setBudgetErr(budgetRes.error);
+        return;
+      }
+
+      const budgetNumber = String(budgetRes.budgetNumber);
+      const emissionDate = new Date().toLocaleDateString("es-AR");
+      const expirationDateText = expirationDate.toLocaleDateString("es-AR");
+
+      const doc = new jsPDF();
+      const pageWidth = doc.internal.pageSize.getWidth();
+
+      // Logo
+      try {
+        const logoDataUrl = await loadImageAsDataUrl("/logo-text.png");
+        doc.addImage(logoDataUrl, "PNG", 14, 17, 80, 28);
+      } catch (e) {
+        console.warn("No se pudo cargar el logo del presupuesto.", e);
+      }
+
+      // Bloque derecho
+      const rightX = 120;
+      let y = 18;
+
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(18);
+      doc.text(`N° Presupuesto: ${budgetNumber}`, rightX, y);
+
+      y += 10;
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(10);
+      // doc.text(`N° Presupuesto: ${budgetNumber}`, rightX, y);
+
+      y += 7;
+      doc.text(`Fecha de emisión: ${emissionDate}`, rightX, y);
+
+      y += 7;
+      doc.text(`Fecha de caducidad: ${expirationDateText}`, rightX, y);
+
+      y += 7;
+      doc.text(
+        `Cliente: ${sale.customer_name?.trim() ? sale.customer_name : "-"}`,
+        rightX,
+        y,
+      );
+
+      y += 7;
+      doc.text(
+        `Vendedor: ${seller?.name ?? seller?.display_name ?? "Sin vendedor asignado"}`,
+        rightX,
+        y,
+      );
+
+      y += 7;
+
+      // Línea separadora
+      const headerBottomY = Math.max(42, y + 6);
+      doc.setDrawColor(220, 220, 220);
+      doc.line(14, headerBottomY, pageWidth - 14, headerBottomY);
+
+      const tableStartY = headerBottomY + 8;
+
+      autoTable(doc, {
+        startY: tableStartY,
+        head: [
+          [
+            "Producto",
+            "Cant.",
+            "Precio unit.",
+            "Bonif %",
+            "Imp. Bonif",
+            "Subtotal",
+          ],
+        ],
+        body: rows.map((r) => [
+          r.product,
+          String(r.qty),
+          formatMoney(r.unit),
+          `${r.bonifPct.toFixed(0)}%`,
+          formatMoney(r.bonifAmount),
+          formatMoney(r.total),
+        ]),
+        styles: {
+          fontSize: 10,
+          cellPadding: 3,
+          overflow: "linebreak",
+          valign: "middle",
+          textColor: 40,
+        },
+        headStyles: {
+          fillColor: [47, 128, 185],
+          textColor: 255,
+          fontStyle: "bold",
+          valign: "middle",
+        },
+        alternateRowStyles: {
+          fillColor: [245, 245, 245],
+        },
+        columnStyles: {
+          0: { cellWidth: 68, halign: "left" },
+          1: { cellWidth: 18, halign: "right" },
+          2: { cellWidth: 28, halign: "right" },
+          3: { cellWidth: 22, halign: "right" },
+          4: { cellWidth: 28, halign: "right" },
+          5: { cellWidth: 28, halign: "right" },
+        },
+        didParseCell(data) {
+          if (data.section === "head") {
+            if (data.column.index === 0) {
+              data.cell.styles.halign = "left";
+            } else {
+              data.cell.styles.halign = "right";
+            }
+          }
+        },
+        margin: { left: 10, right: 14 },
+        tableWidth: "auto",
+      });
+
+      const finalY =
+        (doc as jsPDF & { lastAutoTable?: { finalY: number } }).lastAutoTable
+          ?.finalY ?? tableStartY + 20;
+
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(13);
+      doc.text(`PRECIO TOTAL: ${formatMoney(totalFinal)}`, 14, finalY + 14);
+
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(9);
+      doc.text(
+        "Presupuesto válido por 15 días. Documento no fiscal.",
+        14,
+        finalY + 24,
+      );
+
+      doc.save(`${budgetNumber}.pdf`);
+      router.refresh();
+    } catch (error) {
+      console.error(error);
+      setBudgetErr("Ocurrió un error al generar el presupuesto.");
+    } finally {
+      setBudgetLoadingId(null);
+    }
   }
 
   const productById = useMemo(() => {
@@ -624,6 +851,7 @@ export default function SalesContent({
                             size="sm"
                             onClick={() => openView(s.id)}
                           >
+                            <Eye className="mr-2 h-4 w-4" />
                             Ver
                           </Button>
                           <Button
@@ -635,6 +863,22 @@ export default function SalesContent({
                             <Pencil className="mr-2 h-4 w-4" />
                             Agregar ítem
                           </Button>
+
+                          <Button
+                            variant="secondary"
+                            size="sm"
+                            onClick={() => handleGenerateBudgetPdf(s.id)}
+                            disabled={
+                              s.status === "confirmed" ||
+                              budgetLoadingId === s.id
+                            }
+                          >
+                            <NotepadText className="mr-2 h-4 w-4" />
+                            {budgetLoadingId === s.id
+                              ? "Generando..."
+                              : "Presupuesto"}
+                          </Button>
+
                           <Button
                             variant="default"
                             size="sm"
@@ -645,6 +889,7 @@ export default function SalesContent({
                               s.status === "returned"
                             }
                           >
+                            <LockKeyhole className="mr-2 h-4 w-4" />
                             Cerrar
                           </Button>
                         </div>
@@ -666,6 +911,11 @@ export default function SalesContent({
               </Table>
             </div>
           </div>
+          {budgetErr ? (
+            <Alert variant="destructive">
+              <AlertDescription>{budgetErr}</AlertDescription>
+            </Alert>
+          ) : null}
         </CardContent>
       </Card>
 
@@ -1137,6 +1387,17 @@ export default function SalesContent({
                           <div className="text-sm text-muted-foreground">
                             Número de factura {sale?.invoice_number}
                           </div>
+                          <div className="text-sm text-muted-foreground">
+                            N° presupuesto {sale?.budget_number ?? "-"}
+                          </div>
+                          <div className="text-sm text-muted-foreground">
+                            Emitido:{" "}
+                            {sale?.budget_issued_at
+                              ? new Date(sale.budget_issued_at).toLocaleString(
+                                  "es-AR",
+                                )
+                              : "-"}
+                          </div>
                           <div className="text-base font-semibold">
                             {seller?.name ?? seller?.display_name ?? "Vendedor"}
                             {seller?.sales_team
@@ -1144,20 +1405,20 @@ export default function SalesContent({
                               : ""}
                           </div>
                         </div>
-          {sale && sale.status !== "confirmed" ? (
-  <Button
-    size="sm"
-    variant="outline"
-    onClick={async () => {
-      const res = await refreshSalePrices(sale.id);
-      if (!res.ok) return setViewErr(res.error);
-      await openView(sale.id);
-      router.refresh();
-    }}
-  >
-    Actualizar precios
-  </Button>
-) : null}
+                        {sale && sale.status !== "confirmed" ? (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={async () => {
+                              const res = await refreshSalePrices(sale.id);
+                              if (!res.ok) return setViewErr(res.error);
+                              await openView(sale.id);
+                              router.refresh();
+                            }}
+                          >
+                            Actualizar precios
+                          </Button>
+                        ) : null}
                         <div className="flex flex-wrap items-center gap-2">
                           <Badge variant="secondary" className="rounded-full">
                             {sale?.channel ?? "—"}
