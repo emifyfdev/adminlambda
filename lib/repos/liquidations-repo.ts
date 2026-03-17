@@ -500,3 +500,57 @@ export async function recalculateLiquidation(liquidationId: string) {
   revalidatePath("/liquidations");
   return { ok: true as const };
 }
+
+
+export async function getLiquidationSales(liquidationId: string) {
+  const supabase = await createClient();
+
+  const { data: liq, error: liqErr } = await supabase
+    .from("liquidations")
+    .select("id, period_start, period_end")
+    .eq("id", liquidationId)
+    .single();
+
+  if (liqErr || !liq) {
+    return {
+      ok: false as const,
+      error: liqErr?.message ?? "No se encontró la liquidación.",
+      sales: [],
+    };
+  }
+
+  const startISO = `${liq.period_start}T00:00:00.000Z`;
+
+  const endDate = new Date(`${liq.period_end}T00:00:00.000Z`);
+  endDate.setUTCDate(endDate.getUTCDate() + 1);
+  const endExclusiveISO = endDate.toISOString();
+
+  const { data: sales, error: salesErr } = await supabase
+    .from("sales")
+    .select(`
+      id,
+      sold_at,
+      seller_id,
+      customer_name,
+      total_net,
+      total_commission,
+      commission_rate_at_sale
+    `)
+    .eq("status", "confirmed")
+    .gte("sold_at", startISO)
+    .lt("sold_at", endExclusiveISO)
+    .order("sold_at", { ascending: true });
+
+  if (salesErr) {
+    return {
+      ok: false as const,
+      error: salesErr.message,
+      sales: [],
+    };
+  }
+
+  return {
+    ok: true as const,
+    sales: sales ?? [],
+  };
+}

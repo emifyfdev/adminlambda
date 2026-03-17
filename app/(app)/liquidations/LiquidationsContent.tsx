@@ -1,7 +1,9 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { Plus, Eye, Lock, CheckCircle } from "lucide-react";
+import jsPDF from "jspdf";
+import autoTable from "jspdf-autotable";
+import { Plus, Eye, Lock, CheckCircle, FileText } from "lucide-react";
 import {
   Card,
   CardContent,
@@ -45,6 +47,7 @@ import {
   generateMonthlyLiquidation,
   generateBiweeklyLiquidation,
   getLiquidationDetail,
+  getLiquidationSales,
   setLiquidationStatus,
   recalculateLiquidation,
 } from "@/lib/repos/liquidations-repo";
@@ -71,6 +74,25 @@ const statusColors: Record<LiquidationStatus, string> = {
 
 function fmtMoney(n: number) {
   return `$${Number(n || 0).toLocaleString("es-AR")}`;
+}
+
+function formatPeriod(start?: string | null, end?: string | null) {
+  if (!start || !end) return "-";
+  const s = new Date(`${start}T00:00:00`);
+  const e = new Date(`${end}T00:00:00`);
+  return `${s.toLocaleDateString("es-AR")} al ${e.toLocaleDateString("es-AR")}`;
+}
+
+async function loadImageAsDataUrl(url: string): Promise<string> {
+  const res = await fetch(url);
+  const blob = await res.blob();
+
+  return await new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onloadend = () => resolve(String(reader.result));
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
+  });
 }
 
 function monthOptions() {
@@ -131,6 +153,171 @@ export default function LiquidationsContent({
     return { totalNet, totalCommission, totalProfit, totalDiscount };
   }, [lines]);
 
+async function handleGenerateSellerPdfs(liq: LiquidationRow) {
+  try {
+    const salesRes = await getLiquidationSales(liq.id);
+    if (!salesRes.ok) {
+      console.error(salesRes.error);
+      return;
+    }
+
+    const allSales = salesRes.sales ?? [];
+    if (!allSales.length) {
+      console.warn("No hay ventas para esta liquidación.");
+      return;
+    }
+
+    const periodText = formatPeriod(liq.period_start, liq.period_end);
+
+    const salesBySeller = new Map<string, any[]>();
+    for (const sale of allSales) {
+      if (!salesBySeller.has(sale.seller_id)) {
+        salesBySeller.set(sale.seller_id, []);
+      }
+      salesBySeller.get(sale.seller_id)!.push(sale);
+    }
+
+    for (const [sellerId, sellerSales] of salesBySeller.entries()) {
+      const seller = sellerById.get(sellerId);
+      const sellerName =
+        (seller?.name ?? seller?.display_name ?? "Vendedor") +
+        (seller?.sales_team ? ` (${seller.sales_team})` : "");
+
+      const rows = sellerSales.map((sale) => ({
+        date: new Date(sale.sold_at).toLocaleDateString("es-AR"),
+        customer: sale.customer_name ?? "-",
+        totalSale: Number(sale.total_net || 0),
+        commissionPct: Math.round(
+          Number(sale.commission_rate_at_sale || 0) * 100,
+        ),
+        commissionTotal: Number(sale.total_commission || 0),
+      }));
+
+      const totalVendido = rows.reduce((acc, r) => acc + r.totalSale, 0);
+      const totalComision = rows.reduce((acc, r) => acc + r.commissionTotal, 0);
+
+      const doc = new jsPDF();
+      const pageWidth = doc.internal.pageSize.getWidth();
+
+      try {
+        const logoDataUrl = await loadImageAsDataUrl("/logo-text.png");
+        doc.addImage(logoDataUrl, "PNG", 14, 17, 80, 28);
+      } catch (e) {
+        console.warn("No se pudo cargar el logo de liquidación.", e);
+      }
+
+      const rightX = 120;
+      let y = 18;
+
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(18);
+      doc.text("LIQUIDACIÓN", rightX, y);
+
+      // y += 10;
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(10);
+
+      // doc.text(`ID Liquidación: ${liq.id}`, rightX, y);
+
+      y += 10;
+      doc.text(`Fecha de emisión: ${new Date().toLocaleDateString("es-AR")}`, rightX, y);
+
+      y += 7;
+      doc.text(`Período: ${periodText}`, rightX, y);
+
+      y += 7;
+      doc.text(`Vendedor: ${sellerName}`, rightX, y);
+
+      y += 7;
+      doc.text(`Estado: ${statusLabels[liq.status]}`, rightX, y);
+
+      const headerBottomY = Math.max(42, y + 6);
+      doc.setDrawColor(220, 220, 220);
+      doc.line(14, headerBottomY, pageWidth - 14, headerBottomY);
+
+      const tableStartY = headerBottomY + 8;
+
+      autoTable(doc, {
+        startY: tableStartY,
+        head: [[
+          "Fecha",
+          "Cliente",
+          "Total venta",
+          "% comisión",
+          "Comisión",
+        ]],
+        body: rows.map((r) => [
+          r.date,
+          r.customer,
+          fmtMoney(r.totalSale),
+          `${r.commissionPct}%`,
+          fmtMoney(r.commissionTotal),
+        ]),
+        styles: {
+          fontSize: 10,
+          cellPadding: 3,
+          overflow: "linebreak",
+          valign: "middle",
+          textColor: 40,
+        },
+        headStyles: {
+          fillColor: [47, 128, 185],
+          textColor: 255,
+          fontStyle: "bold",
+          valign: "middle",
+        },
+        alternateRowStyles: {
+          fillColor: [245, 245, 245],
+        },
+       columnStyles: {
+  0: { cellWidth: 24, halign: "left" },   // Fecha
+  1: { cellWidth: 72, halign: "left" },   // Cliente
+  2: { cellWidth: 30, halign: "right" },  // Total venta
+  3: { cellWidth: 26, halign: "right" },  // % comisión
+  4: { cellWidth: 40, halign: "right" },  // Comisión
+},
+        didParseCell(data) {
+          if (data.section === "head") {
+            if (data.column.index <= 1) {
+              data.cell.styles.halign = "left";
+            } else {
+              data.cell.styles.halign = "right";
+            }
+          }
+        },
+        margin: { left: 10, right: 14 },
+        tableWidth: "auto",
+      });
+
+      const finalY =
+        (doc as jsPDF & { lastAutoTable?: { finalY: number } }).lastAutoTable
+          ?.finalY ?? tableStartY + 20;
+
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(13);
+      doc.text(`TOTAL VENDIDO: ${fmtMoney(totalVendido)}`, 14, finalY + 14);
+      doc.text(`TOTAL A LIQUIDAR: ${fmtMoney(totalComision)}`, 14, finalY + 24);
+
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(9);
+      doc.text(
+        "Documento interno de liquidación de comisiones.",
+        14,
+        finalY + 34,
+      );
+
+      const safeSellerName = sellerName
+        .replace(/[\\/:*?"<>|]/g, "")
+        .replace(/\s+/g, "_");
+
+      doc.save(
+        `liquidacion-${safeSellerName}-${liq.period_start}-${liq.period_end}.pdf`,
+      );
+    }
+  } catch (error) {
+    console.error("Error generando PDFs por vendedor:", error);
+  }
+}
   async function openDetail(liqId: string) {
     setErr(null);
     setDetailErr(null);
@@ -336,11 +523,17 @@ export default function LiquidationsContent({
                   <Table>
                     <TableHeader>
                       <TableRow className="hover:bg-transparent">
-                        <TableHead className="p-3 text-left">Vendedor</TableHead>
+                        <TableHead className="p-3 text-left">
+                          Vendedor
+                        </TableHead>
                         <TableHead className="p-3 text-left">Bruto</TableHead>
-                        <TableHead className="p-3 text-left">Descuento</TableHead>
+                        <TableHead className="p-3 text-left">
+                          Descuento
+                        </TableHead>
                         <TableHead className="p-3 text-left">Neto</TableHead>
-                        <TableHead className="p-3 text-left">Comisión</TableHead>
+                        <TableHead className="p-3 text-left">
+                          Comisión
+                        </TableHead>
                         <TableHead className="p-3 text-left ">
                           Ganancia Empresa
                         </TableHead>
@@ -503,6 +696,14 @@ export default function LiquidationsContent({
                         >
                           <Eye className="h-8 w-8" />
                         </Button>
+             <Button
+  type="button"
+  variant="outline"
+ onClick={() => handleGenerateSellerPdfs(liq)}
+>
+  <FileText className="mr-2 h-4 w-4" />
+  PDF liquidación
+</Button>
                       </TableCell>
                     </TableRow>
                   ))}
