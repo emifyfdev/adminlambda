@@ -6,6 +6,7 @@ import type { Product, SaleItemOptions } from "@/lib/types";
 import { SALES_CHANNELS, type SalesChannel } from "@/lib/types";
 import { PAYMENT_METHODS, type PaymentMethod } from "@/lib/types";
 import { COMPLEXITY_ADDONS, type ComplexityAddonKey } from "@/lib/types";
+import { BIOMODELO_VISUALIZADOR_RATE, getBiomodeloBaseUnitPrice } from "@/lib/types";
 import {
   createSaleWithItems,
   getSaleDetail,
@@ -581,11 +582,17 @@ export default function SalesContent({
     });
   }, [salesIniciales, q, sellerById]);
 
+  const isBiomodeloSale = useMemo(
+    () => items.some((it) => productById.get(it.product_id)?.has_complexity_pricing),
+    [items, productById],
+  );
+
   const totals = useMemo(() => {
     let revenue = 0; // neto (con descuento)
     let cost = 0;
     let discountTotal = 0; // monto total descontado
     let grossTotal = 0; // bruto (sin descuento)
+    let commissionBasisTotal = 0; // base sobre la que se calcula la comisión
 
     for (const it of items) {
       const p = productById.get(it.product_id);
@@ -600,7 +607,19 @@ export default function SalesContent({
       grossTotal += gross;
       discountTotal += disc;
       revenue += line;
-      cost += (p?.cost ?? 0) * qty;
+
+      if (p?.has_complexity_pricing) {
+        // Biomodelo: el costo (visualizador) y la base de comisión
+        // (horas-hombre) se calculan sobre el precio BASE del nivel
+        // elegido, sin los adicionales (impresión 3D, modelado, etc).
+        const tier = p.complexity_tiers?.find((t) => t.label === it.complexityLabel);
+        const baseAmount = (tier?.price ?? 0) * qty;
+        cost += baseAmount * BIOMODELO_VISUALIZADOR_RATE;
+        commissionBasisTotal += baseAmount;
+      } else {
+        cost += (p?.cost ?? 0) * qty;
+        commissionBasisTotal += gross;
+      }
     }
 
     return {
@@ -609,6 +628,7 @@ export default function SalesContent({
       totalMargin: revenue - cost,
       totalDiscount: discountTotal,
       totalGross: grossTotal,
+      commissionBasisTotal,
     };
   }, [items, productById]);
 
@@ -622,12 +642,13 @@ export default function SalesContent({
     const rate = Number(selectedPlan.default_rate) || 0;
 
     // Regla:
-    // - si plan es "sale": comisión sobre BRUTO (sin descuento)
+    // - si plan es "sale": comisión sobre la base de comisión (bruto para
+    //   ítems normales, precio base sin adicionales para Biomodelo)
     // - si plan es "margin": comisión sobre margen (neto - costo)
     const base =
       selectedPlan.base_calc === "margin"
         ? totals.totalMargin
-        : totals.totalGross;
+        : totals.commissionBasisTotal;
 
     return Math.max(0, base * rate);
   }, [selectedPlan, totals]);
@@ -1336,23 +1357,46 @@ export default function SalesContent({
                     <span>- Descuento aplicado</span>
                     <span>${totals.totalDiscount.toLocaleString("es-AR")}</span>
                   </div>
-                  <div className="flex justify-between">
-                    <span>- Comisión vendedor (ref. liquidación)</span>
-                    <span>${commissionAmount.toLocaleString("es-AR")}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span>Total venta (neto)</span>
-                    <span>${totals.totalNetSale.toLocaleString("es-AR")}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span>- Costo total (horas hombre + visualizador)</span>
-                    <span>
-                      $
-                      {(totals.totalCost + commissionAmount).toLocaleString(
-                        "es-AR",
-                      )}
-                    </span>
-                  </div>
+                  {isBiomodeloSale ? (
+                    <>
+                      <div className="flex justify-between">
+                        <span>Total venta (neto)</span>
+                        <span>
+                          ${totals.totalNetSale.toLocaleString("es-AR")}
+                        </span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span>- Costo total (horas hombre + visualizador)</span>
+                        <span>
+                          $
+                          {(totals.totalCost + commissionAmount).toLocaleString(
+                            "es-AR",
+                          )}
+                        </span>
+                      </div>
+                      <div className="flex justify-between text-xs text-muted-foreground">
+                        <span>&nbsp;&nbsp;· Comisión (ref. liquidación)</span>
+                        <span>${commissionAmount.toLocaleString("es-AR")}</span>
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <div className="flex justify-between">
+                        <span>- Comisión vendedor</span>
+                        <span>${commissionAmount.toLocaleString("es-AR")}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span>Total venta (neto)</span>
+                        <span>
+                          ${totals.totalNetSale.toLocaleString("es-AR")}
+                        </span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span>- Costo</span>
+                        <span>${totals.totalCost.toLocaleString("es-AR")}</span>
+                      </div>
+                    </>
+                  )}
 
                   <div className="flex justify-between font-medium">
                     <span>= Margen empresa</span>
@@ -1678,6 +1722,10 @@ export default function SalesContent({
                       {(() => {
                         const rate = plan ? Number(plan.default_rate) || 0 : 0;
 
+                        const isBiomodeloView = viewItems.some(
+                          (it) => it.options?.complexity,
+                        );
+
                         const rows = viewItems.map((it) => {
                           const qty = Number(it.qty) || 0;
                           const unit = Number(it.unit_price) || 0;
@@ -1685,12 +1733,35 @@ export default function SalesContent({
                           const gross = qty * unit;
                           const net = Math.max(0, gross - disc);
 
+                          const isBiomodeloItem = !!it.options?.complexity;
+                          const baseUnit = isBiomodeloItem
+                            ? getBiomodeloBaseUnitPrice(unit, it.options)
+                            : unit;
+
                           const unitCost =
-                            Number(it.cost_at_sale ?? it.product?.cost ?? 0) ||
-                            0;
+                            it.cost_at_sale != null
+                              ? Number(it.cost_at_sale) || 0
+                              : isBiomodeloItem
+                                ? baseUnit * BIOMODELO_VISUALIZADOR_RATE
+                                : Number(it.product?.cost ?? 0) || 0;
                           const cost = unitCost * qty;
 
-                          return { it, qty, unit, disc, gross, net, cost };
+                          // Base de comisión: para Biomodelo, precio base sin
+                          // adicionales; para el resto, el bruto del ítem.
+                          const commissionBasis = isBiomodeloItem
+                            ? baseUnit * qty
+                            : gross;
+
+                          return {
+                            it,
+                            qty,
+                            unit,
+                            disc,
+                            gross,
+                            net,
+                            cost,
+                            commissionBasis,
+                          };
                         });
 
                         const grossTotal = rows.reduce(
@@ -1704,7 +1775,14 @@ export default function SalesContent({
                         const netSale = Math.max(0, grossTotal - discountTotal);
                         const costTotal = rows.reduce((a, r) => a + r.cost, 0);
 
-                        const commissionTotal = Math.max(0, grossTotal * rate); // tu regla (sobre bruto)
+                        const commissionBasisTotal = rows.reduce(
+                          (a, r) => a + r.commissionBasis,
+                          0,
+                        );
+                        const commissionTotal = Math.max(
+                          0,
+                          commissionBasisTotal * rate,
+                        );
 
                         // prorrateo comisión por neto de línea
                         const netForWeights = rows.reduce(
@@ -1739,25 +1817,51 @@ export default function SalesContent({
 
                               <Card className="shadow-none">
                                 <CardContent className="p-4">
-                                  <div className="text-xs text-muted-foreground ">
-                                    Costo total (horas hombre + visualizador)
-                                  </div>
-                                  <div className="mt-1 text-2xl font-semibold text-red-600">
-                                    $
-                                    {(costTotal + commissionTotal).toLocaleString(
-                                      "es-AR",
-                                      { maximumFractionDigits: 2 },
-                                    )}
-                                  </div>
-                                  <div className="text-xs text-muted-foreground ">
-                                    Comisión (ref. liquidación)
-                                  </div>
-                                  <div className="mt-1 text-sm font-medium text-muted-foreground">
-                                    $
-                                    {commissionTotal.toLocaleString("es-AR", {
-                                      maximumFractionDigits: 2,
-                                    })}
-                                  </div>
+                                  {isBiomodeloView ? (
+                                    <>
+                                      <div className="text-xs text-muted-foreground ">
+                                        Costo total (horas hombre + visualizador)
+                                      </div>
+                                      <div className="mt-1 text-2xl font-semibold text-red-600">
+                                        $
+                                        {(
+                                          costTotal + commissionTotal
+                                        ).toLocaleString("es-AR", {
+                                          maximumFractionDigits: 2,
+                                        })}
+                                      </div>
+                                      <div className="text-xs text-muted-foreground ">
+                                        Comisión (ref. liquidación)
+                                      </div>
+                                      <div className="mt-1 text-sm font-medium text-muted-foreground">
+                                        $
+                                        {commissionTotal.toLocaleString("es-AR", {
+                                          maximumFractionDigits: 2,
+                                        })}
+                                      </div>
+                                    </>
+                                  ) : (
+                                    <>
+                                      <div className="text-xs text-muted-foreground ">
+                                        Costo
+                                      </div>
+                                      <div className="mt-1 text-2xl font-semibold text-red-600">
+                                        $
+                                        {costTotal.toLocaleString("es-AR", {
+                                          maximumFractionDigits: 2,
+                                        })}
+                                      </div>
+                                      <div className="text-xs text-muted-foreground ">
+                                        Comisión
+                                      </div>
+                                      <div className="mt-1 text-2xl font-semibold text-red-600">
+                                        $
+                                        {commissionTotal.toLocaleString("es-AR", {
+                                          maximumFractionDigits: 2,
+                                        })}
+                                      </div>
+                                    </>
+                                  )}
                                 </CardContent>
                               </Card>
 
