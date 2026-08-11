@@ -378,28 +378,69 @@ export default function SalesContent({
       const expirationDate = new Date(saleDate);
       expirationDate.setDate(expirationDate.getDate() + 15);
 
-      const rows = detailItems.map((it: any) => {
+      const rows: {
+        product: string;
+        qty: number;
+        unit: number;
+        bonifAmount: number;
+        bonifPct: number;
+        total: number;
+      }[] = [];
+
+      for (const it of detailItems as any[]) {
         const qty = Number(it.qty) || 0;
         const unit = Number(it.unit_price) || 0;
         const bonifAmount = Number(it.discount) || 0;
         const gross = qty * unit;
         const bonifPct = gross > 0 ? (bonifAmount / gross) * 100 : 0;
         const total = Math.max(0, gross - bonifAmount);
-        const optionsDesc = describeItemOptions(it.options);
 
-        return {
-          product: it.product?.name
-            ? optionsDesc
-              ? `${it.product.name} (${optionsDesc})`
-              : it.product.name
-            : "Producto",
-          qty,
-          unit,
-          bonifAmount,
-          bonifPct,
-          total,
-        };
-      });
+        const complexity = it.options?.complexity;
+        const addons = it.options?.addons ?? [];
+
+        if (complexity && addons.length) {
+          // Biomodelo con adicionales: se detalla como ítems separados
+          // (nivel base + cada adicional), en vez de un único renglón.
+          const baseUnit = Number(complexity.price) || 0;
+          const baseGross = baseUnit * qty;
+          const baseTotal = Math.max(0, baseGross - bonifAmount);
+
+          rows.push({
+            product: `${it.product?.name ?? "Producto"} (${complexity.label})`,
+            qty,
+            unit: baseUnit,
+            bonifAmount,
+            bonifPct: baseGross > 0 ? (bonifAmount / baseGross) * 100 : 0,
+            total: baseTotal,
+          });
+
+          for (const addon of addons) {
+            const addonUnit = baseUnit * (Number(addon.pct) || 0);
+            rows.push({
+              product: addon.label,
+              qty,
+              unit: addonUnit,
+              bonifAmount: 0,
+              bonifPct: 0,
+              total: addonUnit * qty,
+            });
+          }
+        } else {
+          const optionsDesc = describeItemOptions(it.options);
+          rows.push({
+            product: it.product?.name
+              ? optionsDesc
+                ? `${it.product.name} (${optionsDesc})`
+                : it.product.name
+              : "Producto",
+            qty,
+            unit,
+            bonifAmount,
+            bonifPct,
+            total,
+          });
+        }
+      }
 
       const totalFinal = rows.reduce((acc, r) => acc + r.total, 0);
 

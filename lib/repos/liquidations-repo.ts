@@ -502,6 +502,71 @@ export async function recalculateLiquidation(liquidationId: string) {
 }
 
 
+// Resumen agregado (todo el período, todos los vendedores) del costo
+// "visualizador" de Biomodelo: cantidad de unidades vendidas y monto total
+// a liquidar (cost_at_sale ya congelado por ítem al confirmar la venta).
+export async function getLiquidationVisualizadorSummary(liquidationId: string) {
+  const supabase = await createClient();
+
+  const { data: liq, error: liqErr } = await supabase
+    .from("liquidations")
+    .select("id, period_start, period_end")
+    .eq("id", liquidationId)
+    .single();
+
+  if (liqErr || !liq) {
+    return {
+      ok: false as const,
+      error: liqErr?.message ?? "No se encontró la liquidación.",
+      qty: 0,
+      total: 0,
+    };
+  }
+
+  const { startISO, endExclusiveISO } = periodToStartEndISO(
+    liq.period_start,
+    liq.period_end,
+  );
+
+  const { data: sales, error: salesErr } = await supabase
+    .from("sales")
+    .select("id")
+    .eq("status", "confirmed")
+    .gte("sold_at", startISO)
+    .lt("sold_at", endExclusiveISO);
+
+  if (salesErr) {
+    return { ok: false as const, error: salesErr.message, qty: 0, total: 0 };
+  }
+
+  const saleIds = (sales ?? []).map((s: any) => s.id);
+  if (!saleIds.length) {
+    return { ok: true as const, error: null, qty: 0, total: 0 };
+  }
+
+  const { data: items, error: itemsErr } = await supabase
+    .from("sale_items")
+    .select("qty, cost_at_sale, options")
+    .in("sale_id", saleIds)
+    .not("options", "is", null);
+
+  if (itemsErr) {
+    return { ok: false as const, error: itemsErr.message, qty: 0, total: 0 };
+  }
+
+  let qty = 0;
+  let total = 0;
+  for (const it of (items ?? []) as any[]) {
+    if (!it.options?.complexity) continue;
+    const q = Number(it.qty) || 0;
+    const cost = Number(it.cost_at_sale) || 0;
+    qty += q;
+    total += cost * q;
+  }
+
+  return { ok: true as const, error: null, qty, total };
+}
+
 export async function getLiquidationSales(liquidationId: string) {
   const supabase = await createClient();
 
