@@ -63,8 +63,8 @@ export function SalesRevenueChart({ data }: SalesRevenueChartProps) {
               }}
               formatter={(value: number, name: string) => [`${value.toLocaleString()}`, name]}
             />
-            <Bar dataKey="sales" fill="var(--color-chart-2)" opacity={0.35} radius={[2, 2, 0, 0]} barSize={20} />
-            <Line dataKey="revenue" stroke="var(--color-primary)" strokeWidth={2.5} dot={{ r: 3, fill: "var(--color-primary)" }} />
+            <Bar dataKey="sales" fill="var(--color-chart-2)" opacity={0.35} radius={[2, 2, 0, 0]} barSize={20} isAnimationActive={false} />
+            <Line dataKey="revenue" stroke="var(--color-primary)" strokeWidth={2.5} dot={{ r: 3, fill: "var(--color-primary)" }} isAnimationActive={false} />
           </ComposedChart>
         </ResponsiveContainer>
       </CardContent>
@@ -124,6 +124,7 @@ export function CommissionsChart({ data }: CommissionsChartProps) {
               fill="var(--color-chart-3)"
               fillOpacity={0.15}
               dot={{ r: 3, fill: "var(--color-chart-3)" }}
+              isAnimationActive={false}
             />
           </AreaChart>
         </ResponsiveContainer>
