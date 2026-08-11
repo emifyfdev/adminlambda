@@ -26,6 +26,11 @@ export interface Seller {
   joinedAt: string
 }
 
+export type ComplexityTier = {
+  label: string
+  price: number
+}
+
 export type Product = {
   id: string
   name: string
@@ -35,7 +40,23 @@ export type Product = {
   cost: number
   status: ProductStatus
   created_at: string
+  has_complexity_pricing: boolean
+  complexity_tiers: ComplexityTier[] | null
 }
+
+// Adicionales exclusivos de productos con niveles de complejidad (ej: Biomodelo).
+export const COMPLEXITY_ADDONS = [
+  { key: "impresion_3d", label: "Impresión 3D", pct: 0.10 },
+  { key: "modelado", label: "Modelado", pct: 0.05 },
+  { key: "planificacion_quirurgica", label: "Planificación Quirúrgica", pct: 0.15 },
+] as const
+
+export type ComplexityAddonKey = (typeof COMPLEXITY_ADDONS)[number]["key"]
+
+export type SaleItemOptions = {
+  complexity: ComplexityTier
+  addons: { key: ComplexityAddonKey; label: string; pct: number }[]
+} | null
 
 export interface SaleItem {
   productId: string
