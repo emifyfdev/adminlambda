@@ -58,6 +58,25 @@ export type SaleItemOptions = {
   addons: { key: ComplexityAddonKey; label: string; pct: number }[]
 } | null
 
+// Costo automático del "visualizador" para Biomodelo: % fijo sobre el precio
+// BASE del nivel elegido (sin adicionales). La "comisión" de la venta
+// (horas-hombre) también se calcula sobre ese mismo precio base.
+export const BIOMODELO_VISUALIZADOR_RATE = 0.15
+
+// A partir del unit_price final de un ítem (precio base + adicionales) y los
+// adicionales que se le eligieron, devuelve el precio BASE (sin adicionales),
+// ya que unit_price = base * (1 + suma de % de addons).
+export function getBiomodeloBaseUnitPrice(
+  unitPrice: number,
+  options: SaleItemOptions | null | undefined,
+): number {
+  const addonPct = (options?.addons ?? []).reduce(
+    (sum, a) => sum + (Number(a.pct) || 0),
+    0,
+  )
+  return addonPct > 0 ? unitPrice / (1 + addonPct) : unitPrice
+}
+
 export interface SaleItem {
   productId: string
   productName: string

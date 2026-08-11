@@ -151,8 +151,6 @@ const filteredAndSorted = useMemo(() => {
 
   function validate(f: FormState) {
     if (!f.name.trim()) return "El nombre es obligatorio.";
-    const c = Number(f.cost);
-    if (!Number.isFinite(c) || c < 0) return "Costo inválido.";
 
     if (f.hasComplexityPricing) {
       if (!f.tiers.length) return "Agregá al menos un nivel de complejidad.";
@@ -164,6 +162,8 @@ const filteredAndSorted = useMemo(() => {
     } else {
       const lp = Number(f.list_price);
       if (!Number.isFinite(lp) || lp < 0) return "Precio inválido.";
+      const c = Number(f.cost);
+      if (!Number.isFinite(c) || c < 0) return "Costo inválido.";
     }
     return null;
   }
@@ -193,7 +193,9 @@ const filteredAndSorted = useMemo(() => {
         category: form.category,
         sku: form.sku || null,
         list_price,
-        cost: Number(form.cost),
+        // Con niveles de complejidad, el costo (visualizador) se calcula
+        // automáticamente por venta; el campo manual no se usa.
+        cost: form.hasComplexityPricing ? 0 : Number(form.cost),
         status: form.status,
         has_complexity_pricing: form.hasComplexityPricing,
         complexity_tiers: tiers,
@@ -331,7 +333,16 @@ const filteredAndSorted = useMemo(() => {
                         )}
                       </TableCell>
                       <TableCell className="p-3 whitespace-nowrap">
-                        ${Number(p.cost).toLocaleString("es-AR")}
+                        {p.has_complexity_pricing ? (
+                          <span
+                            className="text-muted-foreground"
+                            title="Visualizador 15% + comisión sobre el precio base de cada venta"
+                          >
+                            Automático
+                          </span>
+                        ) : (
+                          `$${Number(p.cost).toLocaleString("es-AR")}`
+                        )}
                       </TableCell>
                       <TableCell className="p-3">
                         <Badge
@@ -512,28 +523,35 @@ const filteredAndSorted = useMemo(() => {
                   Impresión 3D (+10%), Modelado (+5%) y Planificación
                   Quirúrgica (+15%), combinables entre sí.
                 </p>
+                <p className="text-xs text-muted-foreground">
+                  El costo (visualizador, 15%) y la comisión (horas hombre) se
+                  calculan automáticamente sobre el precio base del nivel
+                  elegido en cada venta — no hace falta cargar un costo acá.
+                </p>
               </div>
             ) : (
-              <div className="grid gap-2">
-                <Label>Precio</Label>
-                <Input
-                  inputMode="decimal"
-                  value={form.list_price}
-                  onChange={(e) =>
-                    setForm({ ...form, list_price: e.target.value })
-                  }
-                />
-              </div>
-            )}
+              <>
+                <div className="grid gap-2">
+                  <Label>Precio</Label>
+                  <Input
+                    inputMode="decimal"
+                    value={form.list_price}
+                    onChange={(e) =>
+                      setForm({ ...form, list_price: e.target.value })
+                    }
+                  />
+                </div>
 
-            <div className="grid gap-2">
-              <Label>Costo</Label>
-              <Input
-                inputMode="decimal"
-                value={form.cost}
-                onChange={(e) => setForm({ ...form, cost: e.target.value })}
-              />
-            </div>
+                <div className="grid gap-2">
+                  <Label>Costo</Label>
+                  <Input
+                    inputMode="decimal"
+                    value={form.cost}
+                    onChange={(e) => setForm({ ...form, cost: e.target.value })}
+                  />
+                </div>
+              </>
+            )}
 
             <div className="grid gap-2">
               <Label>Estado</Label>

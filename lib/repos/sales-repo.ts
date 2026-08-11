@@ -3,6 +3,10 @@
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import type { PaymentMethod, SaleItemOptions } from "@/lib/types";
+import {
+  BIOMODELO_VISUALIZADOR_RATE,
+  getBiomodeloBaseUnitPrice,
+} from "@/lib/types";
 
 export type SaleStatus = "pending" | "confirmed" | "cancelled" | "returned";
 
@@ -53,7 +57,7 @@ async function computeAndFreezeOnConfirm(args: {
 
   const { data: items, error: itemsErr } = await supabase
     .from("sale_items")
-    .select("id, product_id, qty, unit_price, discount, cost_at_sale")
+    .select("id, product_id, qty, unit_price, discount, cost_at_sale, options")
     .eq("sale_id", saleId);
 
   if (itemsErr) {
@@ -80,11 +84,24 @@ async function computeAndFreezeOnConfirm(args: {
     (prods ?? []).map((p: any) => [p.id, toNum(p.cost)]),
   );
 
+  // Costo por unidad de cada ítem: para Biomodelo (tiene options.complexity)
+  // es automático (visualizador = 15% del precio BASE, sin adicionales);
+  // para el resto, el costo cargado en el producto.
+  function unitCostFor(it: any): number {
+    if (it.options?.complexity) {
+      return (
+        getBiomodeloBaseUnitPrice(toNum(it.unit_price), it.options) *
+        BIOMODELO_VISUALIZADOR_RATE
+      );
+    }
+    return costById.get(it.product_id) ?? 0;
+  }
+
   const toUpdate = allItems
     .filter((it: any) => it.cost_at_sale == null)
     .map((it: any) => ({
       id: it.id,
-      cost_at_sale: costById.get(it.product_id) ?? 0,
+      cost_at_sale: unitCostFor(it),
     }));
 
   if (toUpdate.length) {
@@ -111,13 +128,17 @@ async function computeAndFreezeOnConfirm(args: {
     const net = Math.max(0, gross - disc);
 
     const unitCost =
-      it.cost_at_sale != null
-        ? toNum(it.cost_at_sale)
-        : (costById.get(it.product_id) ?? 0);
+      it.cost_at_sale != null ? toNum(it.cost_at_sale) : unitCostFor(it);
 
     const cost = unitCost * qty;
 
-    return { qty, unit, disc, gross, net, cost };
+    // Base de comisión: para Biomodelo, solo el precio BASE (sin
+    // adicionales); para el resto, el bruto del ítem (como siempre).
+    const commissionBasis = it.options?.complexity
+      ? getBiomodeloBaseUnitPrice(unit, it.options) * qty
+      : gross;
+
+    return { qty, unit, disc, gross, net, cost, commissionBasis };
   });
 
   const grossTotal = rows.reduce((a, r) => a + r.gross, 0);
@@ -125,6 +146,7 @@ async function computeAndFreezeOnConfirm(args: {
   const orderDiscount = toNum(sale.order_discount);
   const netTotal = Math.max(0, grossTotal - discountTotal - orderDiscount);
   const costTotal = rows.reduce((a, r) => a + r.cost, 0);
+  const commissionBasisTotal = rows.reduce((a, r) => a + r.commissionBasis, 0);
 
   const { data: plan, error: planErr } = await supabase
     .from("commission_plans")
@@ -145,7 +167,7 @@ async function computeAndFreezeOnConfirm(args: {
 
   const margin = Math.max(0, netTotal - costTotal);
   const commissionBase =
-    commissionBaseCalc === "margin" ? margin : grossTotal;
+    commissionBaseCalc === "margin" ? margin : commissionBasisTotal;
 
   const totalCommission = Math.max(0, commissionBase * commissionRate);
   const companyProfit = Math.max(0, netTotal - costTotal - totalCommission);
@@ -533,7 +555,7 @@ export async function updateSaleItemCost(itemId: string, newCost: number) {
 
   const { data: items, error: itemsErr } = await supabase
     .from("sale_items")
-    .select("qty, unit_price, discount, cost_at_sale")
+    .select("qty, unit_price, discount, cost_at_sale, options")
     .eq("sale_id", saleId);
 
   if (itemsErr) return { ok: false as const, error: itemsErr.message };
@@ -542,6 +564,17 @@ export async function updateSaleItemCost(itemId: string, newCost: number) {
     (a: number, it: any) => a + toNum(it.cost_at_sale) * toNum(it.qty),
     0,
   );
+
+  // Misma regla que al confirmar: para Biomodelo, la comisión se calcula
+  // sobre el precio BASE (sin adicionales), no sobre el bruto facturado.
+  const commissionBasisTotal = (items ?? []).reduce((a: number, it: any) => {
+    const qty = toNum(it.qty);
+    const unit = toNum(it.unit_price);
+    const basis = it.options?.complexity
+      ? getBiomodeloBaseUnitPrice(unit, it.options) * qty
+      : unit * qty;
+    return a + basis;
+  }, 0);
 
   let commissionRate = toNum(sale.commission_rate_at_sale);
   let commissionBaseCalc: "sale" | "margin" =
@@ -561,9 +594,9 @@ export async function updateSaleItemCost(itemId: string, newCost: number) {
   }
 
   const netTotal = toNum(sale.total_net);
-  const grossTotal = toNum(sale.total_gross);
   const margin = Math.max(0, netTotal - costTotal);
-  const commissionBase = commissionBaseCalc === "margin" ? margin : grossTotal;
+  const commissionBase =
+    commissionBaseCalc === "margin" ? margin : commissionBasisTotal;
   const totalCommission = Math.max(0, commissionBase * commissionRate);
   const companyProfit = Math.max(0, netTotal - costTotal - totalCommission);
 
