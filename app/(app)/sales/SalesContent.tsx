@@ -2,17 +2,20 @@
 
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import type { Product } from "@/lib/types";
+import type { Product, SaleItemOptions } from "@/lib/types";
 import { SALES_CHANNELS, type SalesChannel } from "@/lib/types";
 import { PAYMENT_METHODS, type PaymentMethod } from "@/lib/types";
+import { COMPLEXITY_ADDONS, type ComplexityAddonKey } from "@/lib/types";
 import {
   createSaleWithItems,
   getSaleDetail,
   updateSaleStatusAndAddItems,
   refreshSalePrices,
+  updateSaleItemCost,
   assignBudgetNumber,
   type SaleStatus,
 } from "@/lib/repos/sales-repo";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -98,7 +101,59 @@ type ItemForm = {
   qty: string;
   unit_price: string;
   discount: string; // % en el form
+  complexityLabel?: string; // solo productos con niveles de complejidad
+  addonKeys?: ComplexityAddonKey[];
 };
+
+// Precio de un ítem con niveles de complejidad: precio del nivel elegido +
+// los % de los adicionales seleccionados (se suman entre sí).
+function computeComplexityUnitPrice(
+  product: Product | undefined,
+  complexityLabel: string | undefined,
+  addonKeys: ComplexityAddonKey[] | undefined,
+): number {
+  if (!product?.has_complexity_pricing || !product.complexity_tiers?.length) {
+    return 0;
+  }
+  const tier =
+    product.complexity_tiers.find((t) => t.label === complexityLabel) ??
+    product.complexity_tiers[0];
+  const base = Number(tier?.price) || 0;
+  const pctSum = (addonKeys ?? []).reduce((sum, key) => {
+    const addon = COMPLEXITY_ADDONS.find((a) => a.key === key);
+    return sum + (addon?.pct ?? 0);
+  }, 0);
+  return base * (1 + pctSum);
+}
+
+function buildItemOptions(
+  product: Product | undefined,
+  complexityLabel: string | undefined,
+  addonKeys: ComplexityAddonKey[] | undefined,
+): SaleItemOptions {
+  if (!product?.has_complexity_pricing || !product.complexity_tiers?.length) {
+    return null;
+  }
+  const tier =
+    product.complexity_tiers.find((t) => t.label === complexityLabel) ??
+    product.complexity_tiers[0];
+  if (!tier) return null;
+
+  const addons = (addonKeys ?? [])
+    .map((key) => COMPLEXITY_ADDONS.find((a) => a.key === key))
+    .filter((a): a is (typeof COMPLEXITY_ADDONS)[number] => !!a)
+    .map((a) => ({ key: a.key, label: a.label, pct: a.pct }));
+
+  return { complexity: { label: tier.label, price: Number(tier.price) || 0 }, addons };
+}
+
+function describeItemOptions(options: SaleItemOptions | null | undefined) {
+  if (!options?.complexity) return null;
+  const addonLabels = (options.addons ?? []).map((a) => a.label);
+  return addonLabels.length
+    ? `${options.complexity.label} + ${addonLabels.join(" + ")}`
+    : options.complexity.label;
+}
 
 function nowGMTMinus3ForDatetimeLocal() {
   const now = new Date();
@@ -138,6 +193,36 @@ export default function SalesContent({
   const [viewLoading, setViewLoading] = useState(false);
   const [viewErr, setViewErr] = useState<string | null>(null);
   const [viewItems, setViewItems] = useState<any[]>([]);
+
+  const [editingCostItemId, setEditingCostItemId] = useState<string | null>(null);
+  const [costDraft, setCostDraft] = useState("");
+  const [costSaving, setCostSaving] = useState(false);
+
+  function openEditCost(item: any) {
+    setEditingCostItemId(item.id);
+    setCostDraft(String(item.cost_at_sale ?? item.product?.cost ?? 0));
+  }
+
+  async function onSaveCost(itemId: string) {
+    const cost = Number(costDraft);
+    if (!Number.isFinite(cost) || cost < 0) {
+      setViewErr("Costo inválido.");
+      return;
+    }
+    setCostSaving(true);
+    try {
+      const res = await updateSaleItemCost(itemId, cost);
+      if (!res.ok) {
+        setViewErr(res.error);
+        return;
+      }
+      setEditingCostItemId(null);
+      if (viewSaleId) await openView(viewSaleId);
+      router.refresh();
+    } finally {
+      setCostSaving(false);
+    }
+  }
 
   // ✅ NUEVO: Edit
   const [editOpen, setEditOpen] = useState(false);
@@ -185,18 +270,32 @@ export default function SalesContent({
     commissionPlans[0]?.id ?? "",
   );
 
-  // Step 2 items
-  const [items, setItems] = useState<ItemForm[]>(() => {
-    const first = products[0];
-    return [
-      {
-        product_id: first?.id ?? "",
+  function makeDefaultItem(product: Product | undefined): ItemForm {
+    if (product?.has_complexity_pricing) {
+      const firstTier = product.complexity_tiers?.[0];
+      return {
+        product_id: product.id,
         qty: "1",
-        unit_price: first ? String(first.list_price) : "",
+        unit_price: String(
+          computeComplexityUnitPrice(product, firstTier?.label, []),
+        ),
         discount: "0",
-      },
-    ];
-  });
+        complexityLabel: firstTier?.label,
+        addonKeys: [],
+      };
+    }
+    return {
+      product_id: product?.id ?? "",
+      qty: "1",
+      unit_price: product ? String(product.list_price) : "",
+      discount: "0",
+    };
+  }
+
+  // Step 2 items
+  const [items, setItems] = useState<ItemForm[]>(() => [
+    makeDefaultItem(products[0]),
+  ]);
 
   async function openView(saleId: string) {
     setViewErr(null);
@@ -223,15 +322,7 @@ export default function SalesContent({
     setSellerId(sellers[0]?.id ?? "");
     setCommissionPlanId(commissionPlans[0]?.id ?? "");
 
-    const first = products[0];
-    setItems([
-      {
-        product_id: first?.id ?? "",
-        qty: "1",
-        unit_price: first ? String(first.list_price) : "",
-        discount: "0",
-      },
-    ]);
+    setItems([makeDefaultItem(products[0])]);
 
     setOpen(true);
   }
@@ -293,9 +384,14 @@ export default function SalesContent({
         const gross = qty * unit;
         const bonifPct = gross > 0 ? (bonifAmount / gross) * 100 : 0;
         const total = Math.max(0, gross - bonifAmount);
+        const optionsDesc = describeItemOptions(it.options);
 
         return {
-          product: it.product?.name ?? "Producto",
+          product: it.product?.name
+            ? optionsDesc
+              ? `${it.product.name} (${optionsDesc})`
+              : it.product.name
+            : "Producto",
           qty,
           unit,
           bonifAmount,
@@ -592,16 +688,7 @@ export default function SalesContent({
   }
 
   function addItem() {
-    const first = products[0];
-    setItems((prev) => [
-      ...prev,
-      {
-        product_id: first?.id ?? "",
-        qty: "1",
-        unit_price: first ? String(first.list_price) : "",
-        discount: "0",
-      },
-    ]);
+    setItems((prev) => [...prev, makeDefaultItem(products[0])]);
   }
 
   function removeItem(idx: number) {
@@ -613,10 +700,31 @@ export default function SalesContent({
       prev.map((it, i) => {
         if (i !== idx) return it;
         const next = { ...it, ...patch };
+
         if (patch.product_id) {
           const p = productById.get(patch.product_id);
-          if (p) next.unit_price = String(p.list_price);
+          if (p?.has_complexity_pricing) {
+            const firstTier = p.complexity_tiers?.[0];
+            next.complexityLabel = firstTier?.label;
+            next.addonKeys = [];
+            next.unit_price = String(
+              computeComplexityUnitPrice(p, firstTier?.label, []),
+            );
+          } else {
+            next.complexityLabel = undefined;
+            next.addonKeys = undefined;
+            if (p) next.unit_price = String(p.list_price);
+          }
+        } else if (
+          patch.complexityLabel !== undefined ||
+          patch.addonKeys !== undefined
+        ) {
+          const p = productById.get(next.product_id);
+          next.unit_price = String(
+            computeComplexityUnitPrice(p, next.complexityLabel, next.addonKeys),
+          );
         }
+
         return next;
       }),
     );
@@ -624,16 +732,7 @@ export default function SalesContent({
 
   // ✅ NUEVO: helpers edición
   function addEditItem() {
-    const first = products[0];
-    setEditItems((prev) => [
-      ...prev,
-      {
-        product_id: first?.id ?? "",
-        qty: "1",
-        unit_price: first ? String(first.list_price) : "",
-        discount: "0",
-      },
-    ]);
+    setEditItems((prev) => [...prev, makeDefaultItem(products[0])]);
   }
 
   function removeEditItem(idx: number) {
@@ -645,10 +744,31 @@ export default function SalesContent({
       prev.map((it, i) => {
         if (i !== idx) return it;
         const next = { ...it, ...patch };
+
         if (patch.product_id) {
           const p = productById.get(patch.product_id);
-          if (p) next.unit_price = String(p.list_price);
+          if (p?.has_complexity_pricing) {
+            const firstTier = p.complexity_tiers?.[0];
+            next.complexityLabel = firstTier?.label;
+            next.addonKeys = [];
+            next.unit_price = String(
+              computeComplexityUnitPrice(p, firstTier?.label, []),
+            );
+          } else {
+            next.complexityLabel = undefined;
+            next.addonKeys = undefined;
+            if (p) next.unit_price = String(p.list_price);
+          }
+        } else if (
+          patch.complexityLabel !== undefined ||
+          patch.addonKeys !== undefined
+        ) {
+          const p = productById.get(next.product_id);
+          next.unit_price = String(
+            computeComplexityUnitPrice(p, next.complexityLabel, next.addonKeys),
+          );
         }
+
         return next;
       }),
     );
@@ -685,6 +805,11 @@ export default function SalesContent({
             qty,
             unit_price: unit,
             discount: discountAmount, // ✅ guardamos monto en DB
+            options: buildItemOptions(
+              productById.get(it.product_id),
+              it.complexityLabel,
+              it.addonKeys,
+            ),
           };
         }),
       });
@@ -722,6 +847,11 @@ export default function SalesContent({
             qty,
             unit_price: unit,
             discount: discountAmount,
+            options: buildItemOptions(
+              productById.get(it.product_id),
+              it.complexityLabel,
+              it.addonKeys,
+            ),
           };
         }),
       });
@@ -1047,93 +1177,146 @@ export default function SalesContent({
               </div>
 
               <div className="space-y-3">
-                {items.map((it, idx) => (
-                  <div
-                    key={idx}
-                    className="relative rounded-lg border p-3 pr-12"
-                  >
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      onClick={() => removeItem(idx)}
-                      disabled={items.length === 1}
-                      className="absolute right-3 top-1/2 -translate-y-1/2"
+                {items.map((it, idx) => {
+                  const itemProduct = productById.get(it.product_id);
+                  return (
+                    <div
+                      key={idx}
+                      className="relative rounded-lg border p-3 pr-12"
                     >
-                      <Trash2 className="h-4 w-4" />
-                    </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => removeItem(idx)}
+                        disabled={items.length === 1}
+                        className="absolute right-3 top-1/2 -translate-y-1/2"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
 
-                    <div className="grid gap-3 items-end md:grid-cols-[minmax(0,1fr)_80px_108px_80px]">
-                      <div className="grid gap-2 min-w-0">
-                        <Label>Producto</Label>
-                        <Select
-                          value={it.product_id}
-                          onValueChange={(v) =>
-                            onChangeItem(idx, { product_id: v })
-                          }
-                        >
-                          <SelectTrigger className="w-full min-w-0">
-                            <SelectValue
-                              className="truncate"
-                              placeholder="Seleccionar..."
-                            />
-                          </SelectTrigger>
+                      <div className="grid gap-3 items-end md:grid-cols-[minmax(0,1fr)_80px_108px_80px]">
+                        <div className="grid gap-2 min-w-0">
+                          <Label>Producto</Label>
+                          <Select
+                            value={it.product_id}
+                            onValueChange={(v) =>
+                              onChangeItem(idx, { product_id: v })
+                            }
+                          >
+                            <SelectTrigger className="w-full min-w-0">
+                              <SelectValue
+                                className="truncate"
+                                placeholder="Seleccionar..."
+                              />
+                            </SelectTrigger>
 
-                          <SelectContent className="min-w-[420px] max-w-[min(720px,92vw)]">
-                            {products.map((p) => (
-                              <SelectItem key={p.id} value={p.id}>
-                                <span className="block truncate" title={p.name}>
-                                  {p.name}
-                                </span>
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
+                            <SelectContent className="min-w-[420px] max-w-[min(720px,92vw)]">
+                              {products.map((p) => (
+                                <SelectItem key={p.id} value={p.id}>
+                                  <span className="block truncate" title={p.name}>
+                                    {p.name}
+                                  </span>
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+
+                        <div className="grid gap-2">
+                          <Label>Cant.</Label>
+                          <Input
+                            type="number"
+                            min={1}
+                            step={1}
+                            value={it.qty}
+                            onChange={(e) =>
+                              onChangeItem(idx, { qty: e.target.value })
+                            }
+                            className="w-full text-right tabular-nums"
+                          />
+                        </div>
+
+                        <div className="grid gap-2">
+                          <Label>Precio</Label>
+                          <Input
+                            value={Number(it.unit_price || 0).toLocaleString(
+                              "es-AR",
+                            )}
+                            readOnly
+                            disabled
+                            className="w-full text-right tabular-nums"
+                          />
+                        </div>
+
+                        <div className="grid gap-2">
+                          <Label>Desc. %</Label>
+                          <Input
+                            type="number"
+                            min={0}
+                            max={100}
+                            step={1}
+                            inputMode="numeric"
+                            value={it.discount}
+                            onChange={(e) =>
+                              onChangeItem(idx, { discount: e.target.value })
+                            }
+                            className="w-full text-right tabular-nums"
+                          />
+                        </div>
                       </div>
 
-                      <div className="grid gap-2">
-                        <Label>Cant.</Label>
-                        <Input
-                          type="number"
-                          min={1}
-                          step={1}
-                          value={it.qty}
-                          onChange={(e) =>
-                            onChangeItem(idx, { qty: e.target.value })
-                          }
-                          className="w-full text-right tabular-nums"
-                        />
-                      </div>
+                      {itemProduct?.has_complexity_pricing ? (
+                        <div className="mt-3 space-y-2 rounded-md border border-dashed p-3">
+                          <div className="grid gap-2 max-w-xs">
+                            <Label>Nivel de complejidad</Label>
+                            <Select
+                              value={it.complexityLabel}
+                              onValueChange={(v) =>
+                                onChangeItem(idx, { complexityLabel: v })
+                              }
+                            >
+                              <SelectTrigger className="w-full">
+                                <SelectValue placeholder="Seleccionar..." />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {(itemProduct.complexity_tiers ?? []).map((t) => (
+                                  <SelectItem key={t.label} value={t.label}>
+                                    {t.label} (${Number(t.price).toLocaleString("es-AR")})
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </div>
 
-                      <div className="grid gap-2">
-                        <Label>Precio</Label>
-                        <Input
-                          value={Number(it.unit_price || 0).toLocaleString(
-                            "es-AR",
-                          )}
-                          readOnly
-                          disabled
-                          className="w-full text-right tabular-nums"
-                        />
-                      </div>
-
-                      <div className="grid gap-2">
-                        <Label>Desc. %</Label>
-                        <Input
-                          type="number"
-                          min={0}
-                          max={100}
-                          step={1}
-                          inputMode="numeric"
-                          value={it.discount}
-                          onChange={(e) =>
-                            onChangeItem(idx, { discount: e.target.value })
-                          }
-                          className="w-full text-right tabular-nums"
-                        />
-                      </div>
+                          <div className="flex flex-wrap gap-4">
+                            {COMPLEXITY_ADDONS.map((addon) => {
+                              const checked =
+                                it.addonKeys?.includes(addon.key) ?? false;
+                              return (
+                                <label
+                                  key={addon.key}
+                                  className="flex items-center gap-2 text-sm"
+                                >
+                                  <Checkbox
+                                    checked={checked}
+                                    onCheckedChange={(v) => {
+                                      const prevKeys = it.addonKeys ?? [];
+                                      const nextKeys = v
+                                        ? [...prevKeys, addon.key]
+                                        : prevKeys.filter((k) => k !== addon.key);
+                                      onChangeItem(idx, { addonKeys: nextKeys });
+                                    }}
+                                  />
+                                  {addon.label} (+{Math.round(addon.pct * 100)}%)
+                                </label>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      ) : null}
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
           ) : null}
@@ -1251,91 +1434,144 @@ export default function SalesContent({
 
             {editItems.length ? (
               <div className="space-y-3">
-                {editItems.map((it, idx) => (
-                  <div
-                    key={idx}
-                    className="relative rounded-lg border p-3 pr-12"
-                  >
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      onClick={() => removeEditItem(idx)}
-                      className="absolute right-3 top-1/2 -translate-y-1/2"
+                {editItems.map((it, idx) => {
+                  const itemProduct = productById.get(it.product_id);
+                  return (
+                    <div
+                      key={idx}
+                      className="relative rounded-lg border p-3 pr-12"
                     >
-                      <Trash2 className="h-4 w-4" />
-                    </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => removeEditItem(idx)}
+                        className="absolute right-3 top-1/2 -translate-y-1/2"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
 
-                    <div className="grid gap-3 items-end md:grid-cols-[minmax(0,1fr)_80px_108px_80px]">
-                      <div className="grid gap-2 min-w-0">
-                        <Label>Producto</Label>
-                        <Select
-                          value={it.product_id}
-                          onValueChange={(v) =>
-                            onChangeEditItem(idx, { product_id: v })
-                          }
-                        >
-                          <SelectTrigger className="w-full min-w-0">
-                            <SelectValue
-                              className="truncate"
-                              placeholder="Seleccionar..."
-                            />
-                          </SelectTrigger>
-                          <SelectContent className="min-w-[420px] max-w-[min(720px,92vw)]">
-                            {products.map((p) => (
-                              <SelectItem key={p.id} value={p.id}>
-                                <span className="block truncate" title={p.name}>
-                                  {p.name}
-                                </span>
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
+                      <div className="grid gap-3 items-end md:grid-cols-[minmax(0,1fr)_80px_108px_80px]">
+                        <div className="grid gap-2 min-w-0">
+                          <Label>Producto</Label>
+                          <Select
+                            value={it.product_id}
+                            onValueChange={(v) =>
+                              onChangeEditItem(idx, { product_id: v })
+                            }
+                          >
+                            <SelectTrigger className="w-full min-w-0">
+                              <SelectValue
+                                className="truncate"
+                                placeholder="Seleccionar..."
+                              />
+                            </SelectTrigger>
+                            <SelectContent className="min-w-[420px] max-w-[min(720px,92vw)]">
+                              {products.map((p) => (
+                                <SelectItem key={p.id} value={p.id}>
+                                  <span className="block truncate" title={p.name}>
+                                    {p.name}
+                                  </span>
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+
+                        <div className="grid gap-2">
+                          <Label>Cant.</Label>
+                          <Input
+                            type="number"
+                            min={1}
+                            step={1}
+                            value={it.qty}
+                            onChange={(e) =>
+                              onChangeEditItem(idx, { qty: e.target.value })
+                            }
+                            className="w-full text-right tabular-nums"
+                          />
+                        </div>
+
+                        <div className="grid gap-2">
+                          <Label>Precio</Label>
+                          <Input
+                            value={Number(it.unit_price || 0).toLocaleString(
+                              "es-AR",
+                            )}
+                            readOnly
+                            disabled
+                            className="w-full text-right tabular-nums"
+                          />
+                        </div>
+
+                        <div className="grid gap-2">
+                          <Label>Desc. %</Label>
+                          <Input
+                            type="number"
+                            min={0}
+                            max={100}
+                            step={1}
+                            inputMode="numeric"
+                            value={it.discount}
+                            onChange={(e) =>
+                              onChangeEditItem(idx, { discount: e.target.value })
+                            }
+                            className="w-full text-right tabular-nums"
+                          />
+                        </div>
                       </div>
 
-                      <div className="grid gap-2">
-                        <Label>Cant.</Label>
-                        <Input
-                          type="number"
-                          min={1}
-                          step={1}
-                          value={it.qty}
-                          onChange={(e) =>
-                            onChangeEditItem(idx, { qty: e.target.value })
-                          }
-                          className="w-full text-right tabular-nums"
-                        />
-                      </div>
+                      {itemProduct?.has_complexity_pricing ? (
+                        <div className="mt-3 space-y-2 rounded-md border border-dashed p-3">
+                          <div className="grid gap-2 max-w-xs">
+                            <Label>Nivel de complejidad</Label>
+                            <Select
+                              value={it.complexityLabel}
+                              onValueChange={(v) =>
+                                onChangeEditItem(idx, { complexityLabel: v })
+                              }
+                            >
+                              <SelectTrigger className="w-full">
+                                <SelectValue placeholder="Seleccionar..." />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {(itemProduct.complexity_tiers ?? []).map((t) => (
+                                  <SelectItem key={t.label} value={t.label}>
+                                    {t.label} (${Number(t.price).toLocaleString("es-AR")})
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </div>
 
-                      <div className="grid gap-2">
-                        <Label>Precio</Label>
-                        <Input
-                          value={Number(it.unit_price || 0).toLocaleString(
-                            "es-AR",
-                          )}
-                          readOnly
-                          disabled
-                          className="w-full text-right tabular-nums"
-                        />
-                      </div>
-
-                      <div className="grid gap-2">
-                        <Label>Desc. %</Label>
-                        <Input
-                          type="number"
-                          min={0}
-                          max={100}
-                          step={1}
-                          inputMode="numeric"
-                          value={it.discount}
-                          onChange={(e) =>
-                            onChangeEditItem(idx, { discount: e.target.value })
-                          }
-                          className="w-full text-right tabular-nums"
-                        />
-                      </div>
+                          <div className="flex flex-wrap gap-4">
+                            {COMPLEXITY_ADDONS.map((addon) => {
+                              const checked =
+                                it.addonKeys?.includes(addon.key) ?? false;
+                              return (
+                                <label
+                                  key={addon.key}
+                                  className="flex items-center gap-2 text-sm"
+                                >
+                                  <Checkbox
+                                    checked={checked}
+                                    onCheckedChange={(v) => {
+                                      const prevKeys = it.addonKeys ?? [];
+                                      const nextKeys = v
+                                        ? [...prevKeys, addon.key]
+                                        : prevKeys.filter((k) => k !== addon.key);
+                                      onChangeEditItem(idx, { addonKeys: nextKeys });
+                                    }}
+                                  />
+                                  {addon.label} (+{Math.round(addon.pct * 100)}%)
+                                </label>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      ) : null}
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             ) : null}
           </div>
@@ -1588,32 +1824,71 @@ export default function SalesContent({
 
                               <tbody className="tabular-nums">
                                 {/* Filas items */}
-                                {rowWithCommission.map((r) => (
-                                  <tr key={r.it.id} className="border-t">
-                                    <td className="p-3 truncate">
-                                      {r.it.product?.name ?? "-"}
-                                    </td>
-                                    <td className="p-3 text-right">{r.qty}</td>
-                                    <td className="p-3 text-right">
-                                      ${r.unit.toLocaleString("es-AR")}
-                                    </td>
-                                    <td className="p-3 text-right">
-                                      ${r.disc.toLocaleString("es-AR")}
-                                    </td>
-                                    <td className="p-3 text-right font-medium">
-                                      ${r.net.toLocaleString("es-AR")}
-                                    </td>
-                                    <td className="p-3 text-right border-l border-muted-foreground/200">
-                                      ${r.cost.toLocaleString("es-AR")}
-                                    </td>
-                                    <td className="p-3 text-right">
-                                      $
-                                      {r.comm.toLocaleString("es-AR", {
-                                        maximumFractionDigits: 2,
-                                      })}
-                                    </td>
-                                  </tr>
-                                ))}
+                                {rowWithCommission.map((r) => {
+                                  const optionsDesc = describeItemOptions(
+                                    r.it.options,
+                                  );
+                                  return (
+                                    <tr key={r.it.id} className="border-t">
+                                      <td className="p-3 truncate">
+                                        {r.it.product?.name ?? "-"}
+                                        {optionsDesc ? (
+                                          <div className="text-xs text-muted-foreground">
+                                            {optionsDesc}
+                                          </div>
+                                        ) : null}
+                                      </td>
+                                      <td className="p-3 text-right">{r.qty}</td>
+                                      <td className="p-3 text-right">
+                                        ${r.unit.toLocaleString("es-AR")}
+                                      </td>
+                                      <td className="p-3 text-right">
+                                        ${r.disc.toLocaleString("es-AR")}
+                                      </td>
+                                      <td className="p-3 text-right font-medium">
+                                        ${r.net.toLocaleString("es-AR")}
+                                      </td>
+                                      <td className="p-3 text-right border-l border-muted-foreground/200">
+                                        {editingCostItemId === r.it.id ? (
+                                          <div className="flex items-center justify-end gap-1">
+                                            <Input
+                                              inputMode="decimal"
+                                              value={costDraft}
+                                              onChange={(e) =>
+                                                setCostDraft(e.target.value)
+                                              }
+                                              className="h-7 w-24 text-right"
+                                              autoFocus
+                                            />
+                                            <Button
+                                              size="sm"
+                                              className="h-7 px-2"
+                                              disabled={costSaving}
+                                              onClick={() => onSaveCost(r.it.id)}
+                                            >
+                                              OK
+                                            </Button>
+                                          </div>
+                                        ) : (
+                                          <button
+                                            type="button"
+                                            className="underline decoration-dotted underline-offset-2"
+                                            onClick={() => openEditCost(r.it)}
+                                            title="Editar costo real"
+                                          >
+                                            ${r.cost.toLocaleString("es-AR")}
+                                          </button>
+                                        )}
+                                      </td>
+                                      <td className="p-3 text-right">
+                                        $
+                                        {r.comm.toLocaleString("es-AR", {
+                                          maximumFractionDigits: 2,
+                                        })}
+                                      </td>
+                                    </tr>
+                                  );
+                                })}
 
                                 {/* TOTAL BRUTO */}
                                 <tr className="border-t bg-muted/10">
