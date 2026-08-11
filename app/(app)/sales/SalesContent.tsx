@@ -1337,7 +1337,7 @@ export default function SalesContent({
                     <span>${totals.totalDiscount.toLocaleString("es-AR")}</span>
                   </div>
                   <div className="flex justify-between">
-                    <span>- Comisión vendedor </span>
+                    <span>- Comisión vendedor (ref. liquidación)</span>
                     <span>${commissionAmount.toLocaleString("es-AR")}</span>
                   </div>
                   <div className="flex justify-between">
@@ -1345,8 +1345,13 @@ export default function SalesContent({
                     <span>${totals.totalNetSale.toLocaleString("es-AR")}</span>
                   </div>
                   <div className="flex justify-between">
-                    <span>- Costo</span>
-                    <span>${totals.totalCost.toLocaleString("es-AR")}</span>
+                    <span>- Costo total (horas hombre + visualizador)</span>
+                    <span>
+                      $
+                      {(totals.totalCost + commissionAmount).toLocaleString(
+                        "es-AR",
+                      )}
+                    </span>
                   </div>
 
                   <div className="flex justify-between font-medium">
@@ -1735,18 +1740,19 @@ export default function SalesContent({
                               <Card className="shadow-none">
                                 <CardContent className="p-4">
                                   <div className="text-xs text-muted-foreground ">
-                                    Costo
+                                    Costo total (horas hombre + visualizador)
                                   </div>
                                   <div className="mt-1 text-2xl font-semibold text-red-600">
                                     $
-                                    {costTotal.toLocaleString("es-AR", {
-                                      maximumFractionDigits: 2,
-                                    })}
+                                    {(costTotal + commissionTotal).toLocaleString(
+                                      "es-AR",
+                                      { maximumFractionDigits: 2 },
+                                    )}
                                   </div>
                                   <div className="text-xs text-muted-foreground ">
-                                    Comisión
+                                    Comisión (ref. liquidación)
                                   </div>
-                                  <div className="mt-1 text-2xl font-semibold text-red-600">
+                                  <div className="mt-1 text-sm font-medium text-muted-foreground">
                                     $
                                     {commissionTotal.toLocaleString("es-AR", {
                                       maximumFractionDigits: 2,
