@@ -33,6 +33,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Label } from "@/components/ui/label";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Select,
   SelectContent,
@@ -47,6 +48,8 @@ type Props = {
   productsIniciales: Product[];
 };
 
+type TierForm = { label: string; price: string };
+
 type FormState = {
   id?: string;
   name: string;
@@ -55,7 +58,15 @@ type FormState = {
   list_price: string;
   cost: string;
   status: ProductStatus;
+  hasComplexityPricing: boolean;
+  tiers: TierForm[];
 };
+
+const DEFAULT_TIERS: TierForm[] = [
+  { label: "Baja", price: "" },
+  { label: "Media", price: "" },
+  { label: "Alta", price: "" },
+];
 
 function toForm(p?: Product): FormState {
   const cat = p?.category;
@@ -63,6 +74,15 @@ function toForm(p?: Product): FormState {
     cat && PRODUCT_CATEGORIES.includes(cat as any)
       ? (cat as ProductCategory)
       : "RITMO";
+
+  const hasComplexityPricing = p?.has_complexity_pricing ?? false;
+  const tiers =
+    hasComplexityPricing && p?.complexity_tiers?.length
+      ? p.complexity_tiers.map((t) => ({
+          label: t.label,
+          price: String(t.price),
+        }))
+      : DEFAULT_TIERS;
 
   return {
     id: p?.id,
@@ -72,6 +92,8 @@ function toForm(p?: Product): FormState {
     list_price: p ? String(p.list_price) : "",
     cost: p ? String(p.cost) : "",
     status: (p?.status ?? "active") as ProductStatus,
+    hasComplexityPricing,
+    tiers,
   };
 }
 
@@ -129,10 +151,20 @@ const filteredAndSorted = useMemo(() => {
 
   function validate(f: FormState) {
     if (!f.name.trim()) return "El nombre es obligatorio.";
-    const lp = Number(f.list_price);
     const c = Number(f.cost);
-    if (!Number.isFinite(lp) || lp < 0) return "Precio inválido.";
     if (!Number.isFinite(c) || c < 0) return "Costo inválido.";
+
+    if (f.hasComplexityPricing) {
+      if (!f.tiers.length) return "Agregá al menos un nivel de complejidad.";
+      for (const t of f.tiers) {
+        if (!t.label.trim()) return "Cada nivel necesita un nombre.";
+        const p = Number(t.price);
+        if (!Number.isFinite(p) || p < 0) return `Precio inválido en "${t.label}".`;
+      }
+    } else {
+      const lp = Number(f.list_price);
+      if (!Number.isFinite(lp) || lp < 0) return "Precio inválido.";
+    }
     return null;
   }
 
@@ -146,13 +178,25 @@ const filteredAndSorted = useMemo(() => {
 
     setSaving(true);
     try {
+      const tiers = form.hasComplexityPricing
+        ? form.tiers.map((t) => ({ label: t.label.trim(), price: Number(t.price) }))
+        : null;
+
+      // list_price es obligatorio en la base incluso con niveles de complejidad:
+      // usamos el precio más bajo como referencia para listados/ordenamiento.
+      const list_price = form.hasComplexityPricing
+        ? Math.min(...(tiers ?? []).map((t) => t.price))
+        : Number(form.list_price);
+
       const payload = {
         name: form.name,
         category: form.category,
         sku: form.sku || null,
-        list_price: Number(form.list_price),
+        list_price,
         cost: Number(form.cost),
         status: form.status,
+        has_complexity_pricing: form.hasComplexityPricing,
+        complexity_tiers: tiers,
       };
 
       const res =
@@ -271,7 +315,20 @@ const filteredAndSorted = useMemo(() => {
                       <TableCell className="p-3">{p.category ?? "-"}</TableCell>
                       <TableCell className="p-3">{p.sku ?? "-"}</TableCell>
                       <TableCell className="p-3 whitespace-nowrap">
-                        ${Number(p.list_price).toLocaleString("es-AR")}
+                        {p.has_complexity_pricing && p.complexity_tiers?.length ? (
+                          <span title="Precio según nivel de complejidad">
+                            $
+                            {Math.min(
+                              ...p.complexity_tiers.map((t) => t.price),
+                            ).toLocaleString("es-AR")}{" "}
+                            – $
+                            {Math.max(
+                              ...p.complexity_tiers.map((t) => t.price),
+                            ).toLocaleString("es-AR")}
+                          </span>
+                        ) : (
+                          `$${Number(p.list_price).toLocaleString("es-AR")}`
+                        )}
                       </TableCell>
                       <TableCell className="p-3 whitespace-nowrap">
                         ${Number(p.cost).toLocaleString("es-AR")}
@@ -373,7 +430,90 @@ const filteredAndSorted = useMemo(() => {
               />
             </div>
 
-            <div className="grid grid-cols-2 gap-4">
+            <div className="flex items-center gap-2 rounded-md border p-3">
+              <Checkbox
+                id="has-complexity-pricing"
+                checked={form.hasComplexityPricing}
+                onCheckedChange={(v) =>
+                  setForm({
+                    ...form,
+                    hasComplexityPricing: v === true,
+                    tiers: form.tiers.length ? form.tiers : DEFAULT_TIERS,
+                  })
+                }
+              />
+              <Label htmlFor="has-complexity-pricing" className="cursor-pointer">
+                Tiene niveles de complejidad (ej: Biomodelo)
+              </Label>
+            </div>
+
+            {form.hasComplexityPricing ? (
+              <div className="grid gap-2">
+                <Label>Niveles de complejidad</Label>
+                <div className="space-y-2">
+                  {form.tiers.map((t, idx) => (
+                    <div key={idx} className="flex items-center gap-2">
+                      <Input
+                        placeholder="Nombre (ej: Baja)"
+                        value={t.label}
+                        onChange={(e) => {
+                          const tiers = [...form.tiers];
+                          tiers[idx] = { ...tiers[idx], label: e.target.value };
+                          setForm({ ...form, tiers });
+                        }}
+                        className="flex-1"
+                      />
+                      <Input
+                        inputMode="decimal"
+                        placeholder="Precio"
+                        value={t.price}
+                        onChange={(e) => {
+                          const tiers = [...form.tiers];
+                          tiers[idx] = { ...tiers[idx], price: e.target.value };
+                          setForm({ ...form, tiers });
+                        }}
+                        className="w-32"
+                      />
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        onClick={() =>
+                          setForm({
+                            ...form,
+                            tiers: form.tiers.filter((_, i) => i !== idx),
+                          })
+                        }
+                        disabled={form.tiers.length <= 1}
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="w-fit"
+                  onClick={() =>
+                    setForm({
+                      ...form,
+                      tiers: [...form.tiers, { label: "", price: "" }],
+                    })
+                  }
+                >
+                  <Plus className="mr-2 h-4 w-4" />
+                  Agregar nivel
+                </Button>
+                <p className="text-xs text-muted-foreground">
+                  Al cargar una venta con este producto vas a poder elegir el
+                  nivel, y (solo para este tipo de producto) sumar adicionales:
+                  Impresión 3D (+10%), Modelado (+5%) y Planificación
+                  Quirúrgica (+15%), combinables entre sí.
+                </p>
+              </div>
+            ) : (
               <div className="grid gap-2">
                 <Label>Precio</Label>
                 <Input
@@ -384,14 +524,15 @@ const filteredAndSorted = useMemo(() => {
                   }
                 />
               </div>
-              <div className="grid gap-2">
-                <Label>Costo</Label>
-                <Input
-                  inputMode="decimal"
-                  value={form.cost}
-                  onChange={(e) => setForm({ ...form, cost: e.target.value })}
-                />
-              </div>
+            )}
+
+            <div className="grid gap-2">
+              <Label>Costo</Label>
+              <Input
+                inputMode="decimal"
+                value={form.cost}
+                onChange={(e) => setForm({ ...form, cost: e.target.value })}
+              />
             </div>
 
             <div className="grid gap-2">

@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
-import type { PaymentMethod } from "@/lib/types";
+import type { PaymentMethod, SaleItemOptions } from "@/lib/types";
 
 export type SaleStatus = "pending" | "confirmed" | "cancelled" | "returned";
 
@@ -22,6 +22,7 @@ export type SaleItemInsert = {
   qty: number;
   unit_price: number;
   discount: number; // monto descuento
+  options?: SaleItemOptions;
 };
 
 function toNum(v: any) {
@@ -225,6 +226,7 @@ export async function createSaleWithItems(input: {
     qty: toNum(it.qty),
     unit_price: toNum(it.unit_price),
     discount: toNum(it.discount) || 0,
+    options: it.options ?? null,
   }));
 
   const { error: itemsErr } = await supabase
@@ -270,7 +272,7 @@ export async function getSaleDetail(saleId: string) {
   const { data, error } = await supabase
     .from("sale_items")
     .select(
-      "id, qty, unit_price, discount, cost_at_sale, product:products(name, cost)",
+      "id, qty, unit_price, discount, cost_at_sale, options, product:products(name, cost)",
     )
     .eq("sale_id", saleId)
     .order("id", { ascending: true });
@@ -320,6 +322,7 @@ export async function updateSaleStatusAndAddItems(input: {
       qty: toNum(it.qty),
       unit_price: toNum(it.unit_price),
       discount: toNum(it.discount) || 0,
+      options: it.options ?? null,
     }));
 
     const { error: insErr } = await supabase.from("sale_items").insert(payload);
@@ -394,7 +397,7 @@ export async function refreshSalePrices(saleId: string) {
 
   const { data: items, error: itemsErr } = await supabase
     .from("sale_items")
-    .select("id, product_id, qty, discount")
+    .select("id, product_id, qty, discount, options")
     .eq("sale_id", saleId);
 
   if (itemsErr) return { ok: false as const, error: itemsErr.message };
@@ -407,18 +410,43 @@ export async function refreshSalePrices(saleId: string) {
 
   const { data: prods, error: prodsErr } = await supabase
     .from("products")
-    .select("id, list_price")
+    .select("id, list_price, has_complexity_pricing, complexity_tiers")
     .in("id", productIds);
 
   if (prodsErr) return { ok: false as const, error: prodsErr.message };
 
-  const priceById = new Map(
-    (prods ?? []).map((p: any) => [p.id, Number(p.list_price) || 0]),
+  const productById = new Map((prods ?? []).map((p: any) => [p.id, p]));
+
+  // Para ítems con niveles de complejidad, recalculamos el precio base
+  // buscando el nivel elegido (por nombre) entre los niveles ACTUALES del
+  // producto, y le volvemos a sumar los mismos adicionales elegidos en su
+  // momento. Si el nivel ya no existe, dejamos el precio como estaba.
+  function recomputeUnitPrice(it: any): number {
+    const product = productById.get(it.product_id);
+    const options = it.options;
+
+    if (product?.has_complexity_pricing && options?.complexity) {
+      const currentTier = (product.complexity_tiers ?? []).find(
+        (t: any) => t.label === options.complexity.label,
+      );
+      const basePrice = Number(currentTier?.price ?? options.complexity.price) || 0;
+      const addonsPct = (options.addons ?? []).reduce(
+        (a: number, ad: any) => a + (Number(ad.pct) || 0),
+        0,
+      );
+      return basePrice * (1 + addonsPct);
+    }
+
+    return Number(product?.list_price) || 0;
+  }
+
+  const unitPriceById = new Map(
+    (items ?? []).map((it: any) => [it.id, recomputeUnitPrice(it)]),
   );
 
   const updates = (items ?? []).map((it: any) => ({
     id: it.id,
-    unit_price: priceById.get(it.product_id) ?? 0,
+    unit_price: unitPriceById.get(it.id) ?? 0,
   }));
 
   for (const u of updates) {
@@ -435,7 +463,7 @@ export async function refreshSalePrices(saleId: string) {
 
   for (const it of (items ?? []) as any[]) {
     const qty = Number(it.qty) || 0;
-    const unit = priceById.get(it.product_id) ?? 0;
+    const unit = unitPriceById.get(it.id) ?? 0;
     const disc = Number(it.discount) || 0;
     gross += qty * unit;
     discount += disc;
@@ -451,6 +479,100 @@ export async function refreshSalePrices(saleId: string) {
       total_discount: discount,
       total_net: net,
       order_discount: orderDiscount,
+    })
+    .eq("id", saleId);
+
+  if (upErr) return { ok: false as const, error: upErr.message };
+
+  revalidatePath("/sales");
+  revalidatePath("/dashboard");
+  return { ok: true as const };
+}
+
+// Permite cargar/corregir el costo real de un ítem (ej: filamento usado)
+// una vez conocido, típicamente después de imprimir. No toca lo que se le
+// facturó al cliente (unit_price/discount/total_net quedan igual): solo
+// recalcula costo, comisión (si el plan es por margen) y margen de Lambda.
+export async function updateSaleItemCost(itemId: string, newCost: number) {
+  const supabase = await createClient();
+
+  if (!Number.isFinite(newCost) || newCost < 0) {
+    return { ok: false as const, error: "Costo inválido." };
+  }
+
+  const { data: item, error: itemErr } = await supabase
+    .from("sale_items")
+    .select("id, sale_id")
+    .eq("id", itemId)
+    .single();
+
+  if (itemErr || !item) {
+    return { ok: false as const, error: itemErr?.message ?? "Ítem no encontrado." };
+  }
+
+  const { error: updErr } = await supabase
+    .from("sale_items")
+    .update({ cost_at_sale: newCost })
+    .eq("id", itemId);
+
+  if (updErr) return { ok: false as const, error: updErr.message };
+
+  const saleId = item.sale_id as string;
+
+  const { data: sale, error: saleErr } = await supabase
+    .from("sales")
+    .select(
+      "id, total_gross, total_discount, total_net, order_discount, commission_plan_id, commission_rate_at_sale, commission_base_calc_at_sale",
+    )
+    .eq("id", saleId)
+    .single();
+
+  if (saleErr || !sale) {
+    return { ok: false as const, error: saleErr?.message ?? "Venta no encontrada." };
+  }
+
+  const { data: items, error: itemsErr } = await supabase
+    .from("sale_items")
+    .select("qty, unit_price, discount, cost_at_sale")
+    .eq("sale_id", saleId);
+
+  if (itemsErr) return { ok: false as const, error: itemsErr.message };
+
+  const costTotal = (items ?? []).reduce(
+    (a: number, it: any) => a + toNum(it.cost_at_sale) * toNum(it.qty),
+    0,
+  );
+
+  let commissionRate = toNum(sale.commission_rate_at_sale);
+  let commissionBaseCalc: "sale" | "margin" =
+    sale.commission_base_calc_at_sale === "margin" ? "margin" : "sale";
+
+  if (!sale.commission_rate_at_sale && sale.commission_plan_id) {
+    const { data: plan } = await supabase
+      .from("commission_plans")
+      .select("base_calc, default_rate")
+      .eq("id", sale.commission_plan_id)
+      .single();
+
+    if (plan) {
+      commissionRate = toNum(plan.default_rate);
+      commissionBaseCalc = plan.base_calc === "margin" ? "margin" : "sale";
+    }
+  }
+
+  const netTotal = toNum(sale.total_net);
+  const grossTotal = toNum(sale.total_gross);
+  const margin = Math.max(0, netTotal - costTotal);
+  const commissionBase = commissionBaseCalc === "margin" ? margin : grossTotal;
+  const totalCommission = Math.max(0, commissionBase * commissionRate);
+  const companyProfit = Math.max(0, netTotal - costTotal - totalCommission);
+
+  const { error: upErr } = await supabase
+    .from("sales")
+    .update({
+      total_cost: costTotal,
+      total_commission: totalCommission,
+      company_profit: companyProfit,
     })
     .eq("id", saleId);
 
