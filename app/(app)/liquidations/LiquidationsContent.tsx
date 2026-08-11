@@ -48,6 +48,7 @@ import {
   generateBiweeklyLiquidation,
   getLiquidationDetail,
   getLiquidationSales,
+  getLiquidationVisualizadorSummary,
   setLiquidationStatus,
   recalculateLiquidation,
 } from "@/lib/repos/liquidations-repo";
@@ -120,6 +121,10 @@ export default function LiquidationsContent({
   const [selectedLiqId, setSelectedLiqId] = useState<string | null>(null);
   const [selectedLiq, setSelectedLiq] = useState<LiquidationRow | null>(null);
   const [lines, setLines] = useState<LiquidationLineRow[]>([]);
+  const [visualizador, setVisualizador] = useState<{ qty: number; total: number }>({
+    qty: 0,
+    total: 0,
+  });
   const [detailErr, setDetailErr] = useState<string | null>(null);
   const [loadingDetail, setLoadingDetail] = useState(false);
 
@@ -331,6 +336,11 @@ async function handleGenerateSellerPdfs(liq: LiquidationRow) {
       }
       setSelectedLiq(res.liquidation);
       setLines(res.lines);
+
+      const visRes = await getLiquidationVisualizadorSummary(liqId);
+      setVisualizador(
+        visRes.ok ? { qty: visRes.qty, total: visRes.total } : { qty: 0, total: 0 },
+      );
     } finally {
       setLoadingDetail(false);
     }
@@ -400,6 +410,7 @@ async function handleGenerateSellerPdfs(liq: LiquidationRow) {
                   setSelectedLiqId(null);
                   setSelectedLiq(null);
                   setLines([]);
+                  setVisualizador({ qty: 0, total: 0 });
                 }}
               >
                 {"<-"} Volver
@@ -580,6 +591,23 @@ async function handleGenerateSellerPdfs(liq: LiquidationRow) {
                             className="p-6 text-center text-muted-foreground"
                           >
                             No hay ventas confirmadas en este período.
+                          </TableCell>
+                        </TableRow>
+                      ) : null}
+
+                      {visualizador.qty > 0 ? (
+                        <TableRow className="h-12 border-t-2 bg-muted/30">
+                          <TableCell className="pl-4 text-sm font-medium">
+                            Visualizador (Biomodelo)
+                          </TableCell>
+                          <TableCell
+                            colSpan={5}
+                            className="text-sm text-muted-foreground"
+                          >
+                            Cantidad: {visualizador.qty}
+                          </TableCell>
+                          <TableCell className="text-red-600 pr-4 text-sm font-semibold">
+                            {fmtMoney(visualizador.total)}
                           </TableCell>
                         </TableRow>
                       ) : null}
