@@ -171,8 +171,8 @@ function pct(rate: number) {
   return `${Math.round((Number(rate) || 0) * 100)}%`;
 }
 
-function formatMoney(value: number) {
-  return `$${Number(value || 0).toLocaleString("es-AR", {
+function formatMoney(value: number, currency: string = "$") {
+  return `${currency}${Number(value || 0).toLocaleString("es-AR", {
     minimumFractionDigits: 0,
     maximumFractionDigits: 2,
   })}`;
@@ -388,6 +388,9 @@ export default function SalesContent({
   }) {
     const { sale, seller, detailItems, budgetNumber, emissionDate } = params;
 
+    const isBiomodelo = detailItems.some((it: any) => it.options?.complexity);
+    const currency = isBiomodelo ? "U$D" : "$";
+
     const expirationDate = new Date(emissionDate);
     expirationDate.setDate(expirationDate.getDate() + 15);
 
@@ -528,10 +531,10 @@ export default function SalesContent({
         body: rows.map((r) => [
           r.product,
           String(r.qty),
-          formatMoney(r.unit),
+          formatMoney(r.unit, currency),
           `${r.bonifPct.toFixed(0)}%`,
-          formatMoney(r.bonifAmount),
-          formatMoney(r.total),
+          formatMoney(r.bonifAmount, currency),
+          formatMoney(r.total, currency),
         ]),
         styles: {
           fontSize: 10,
@@ -576,15 +579,36 @@ export default function SalesContent({
 
       doc.setFont("helvetica", "bold");
       doc.setFontSize(13);
-      doc.text(`PRECIO TOTAL: ${formatMoney(totalFinal)}`, 14, finalY + 14);
+      doc.text(
+        `PRECIO TOTAL: ${formatMoney(totalFinal, currency)}`,
+        14,
+        finalY + 14,
+      );
 
       doc.setFont("helvetica", "normal");
       doc.setFontSize(9);
-      doc.text(
-        "Presupuesto válido por 15 días. Documento no fiscal.",
-        14,
-        finalY + 24,
-      );
+
+      if (isBiomodelo) {
+        const maxWidth = pageWidth - 28;
+        const paragraphs = [
+          "COTIZACIÓN: En dólares, incluye iva. Se abona al tipo de cambio billete vendedor BNA del día de pago.",
+          "FORMA DE PAGO: Anticipo de seña del 15%.",
+          "MANTENIMIENTO DE LA OFERTA: La presente oferta será válida por un plazo de 15 días.",
+        ];
+
+        let paragraphY = finalY + 24;
+        for (const paragraph of paragraphs) {
+          const lines = doc.splitTextToSize(paragraph, maxWidth);
+          doc.text(lines, 14, paragraphY);
+          paragraphY += lines.length * 5 + 4;
+        }
+      } else {
+        doc.text(
+          "Presupuesto válido por 15 días. Documento no fiscal.",
+          14,
+          finalY + 24,
+        );
+      }
 
     return { doc, totalFinal };
   }
