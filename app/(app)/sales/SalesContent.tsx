@@ -253,6 +253,8 @@ export default function SalesContent({
 
   const [budgetLoadingId, setBudgetLoadingId] = useState<string | null>(null);
   const [budgetErr, setBudgetErr] = useState<string | null>(null);
+  const [pdfViewOpen, setPdfViewOpen] = useState(false);
+  const [pdfViewUrl, setPdfViewUrl] = useState<string | null>(null);
 
   function openClose(saleId: string) {
     setCloseErr(null);
@@ -372,32 +374,24 @@ export default function SalesContent({
     });
   }
 
-  async function handleGenerateBudgetPdf(saleId: string) {
-    setBudgetErr(null);
-    setBudgetLoadingId(saleId);
+  // Arma el jsPDF del presupuesto a partir de los ítems de la venta
+  // (sale_items: unit_price/qty/discount/options), que nunca se modifican
+  // una vez que la venta queda confirmed/cancelled/returned. Por eso, tanto
+  // generar el presupuesto original como "verlo" después producen el mismo
+  // documento — no hace falta guardar el PDF en ningún lado.
+  async function buildBudgetDoc(params: {
+    sale: any;
+    seller: any;
+    detailItems: any[];
+    budgetNumber: string;
+    emissionDate: Date;
+  }) {
+    const { sale, seller, detailItems, budgetNumber, emissionDate } = params;
 
-    try {
-      const sale = salesIniciales.find((x) => x.id === saleId);
-      if (!sale) {
-        setBudgetErr("No se encontró la venta.");
-        return;
-      }
+    const expirationDate = new Date(emissionDate);
+    expirationDate.setDate(expirationDate.getDate() + 15);
 
-      const seller = sellers.find((x) => x.id === sale.seller_id);
-
-      const res = await getSaleDetail(saleId);
-      if (!res.ok) {
-        setBudgetErr(res.error);
-        return;
-      }
-
-      const detailItems = res.items ?? [];
-
-      const saleDate = new Date(sale.sold_at);
-      const expirationDate = new Date(saleDate);
-      expirationDate.setDate(expirationDate.getDate() + 15);
-
-      const rows: {
+    const rows: {
         product: string;
         qty: number;
         unit: number;
@@ -463,14 +457,7 @@ export default function SalesContent({
 
       const totalFinal = rows.reduce((acc, r) => acc + r.total, 0);
 
-      const budgetRes = await assignBudgetNumber(sale.id);
-      if (!budgetRes.ok) {
-        setBudgetErr(budgetRes.error);
-        return;
-      }
-
-      const budgetNumber = String(budgetRes.budgetNumber);
-      const emissionDate = new Date().toLocaleDateString("es-AR");
+      const emissionDateText = emissionDate.toLocaleDateString("es-AR");
       const expirationDateText = expirationDate.toLocaleDateString("es-AR");
 
       const doc = new jsPDF();
@@ -498,7 +485,7 @@ export default function SalesContent({
       // doc.text(`N° Presupuesto: ${budgetNumber}`, rightX, y);
 
       y += 7;
-      doc.text(`Fecha de emisión: ${emissionDate}`, rightX, y);
+      doc.text(`Fecha de emisión: ${emissionDateText}`, rightX, y);
 
       y += 7;
       doc.text(`Fecha de caducidad: ${expirationDateText}`, rightX, y);
@@ -599,8 +586,90 @@ export default function SalesContent({
         finalY + 24,
       );
 
+    return { doc, totalFinal };
+  }
+
+  async function handleGenerateBudgetPdf(saleId: string) {
+    setBudgetErr(null);
+    setBudgetLoadingId(saleId);
+
+    try {
+      const sale = salesIniciales.find((x) => x.id === saleId);
+      if (!sale) {
+        setBudgetErr("No se encontró la venta.");
+        return;
+      }
+
+      const seller = sellers.find((x) => x.id === sale.seller_id);
+
+      const res = await getSaleDetail(saleId);
+      if (!res.ok) {
+        setBudgetErr(res.error);
+        return;
+      }
+
+      const budgetRes = await assignBudgetNumber(sale.id);
+      if (!budgetRes.ok) {
+        setBudgetErr(budgetRes.error);
+        return;
+      }
+
+      const budgetNumber = String(budgetRes.budgetNumber);
+
+      const { doc } = await buildBudgetDoc({
+        sale,
+        seller,
+        detailItems: res.items ?? [],
+        budgetNumber,
+        emissionDate: new Date(),
+      });
+
       doc.save(`${budgetNumber}.pdf`);
       router.refresh();
+    } catch (error) {
+      console.error(error);
+      setBudgetErr("Ocurrió un error al generar el presupuesto.");
+    } finally {
+      setBudgetLoadingId(null);
+    }
+  }
+
+  async function handleViewBudgetPdf(saleId: string) {
+    setBudgetErr(null);
+    setBudgetLoadingId(saleId);
+
+    try {
+      const sale = salesIniciales.find((x) => x.id === saleId);
+      if (!sale) {
+        setBudgetErr("No se encontró la venta.");
+        return;
+      }
+
+      if (!sale.budget_number) {
+        setBudgetErr("Esta venta no tiene un presupuesto emitido.");
+        return;
+      }
+
+      const seller = sellers.find((x) => x.id === sale.seller_id);
+
+      const res = await getSaleDetail(saleId);
+      if (!res.ok) {
+        setBudgetErr(res.error);
+        return;
+      }
+
+      const { doc } = await buildBudgetDoc({
+        sale,
+        seller,
+        detailItems: res.items ?? [],
+        budgetNumber: String(sale.budget_number),
+        emissionDate: sale.budget_issued_at
+          ? new Date(sale.budget_issued_at)
+          : new Date(sale.sold_at),
+      });
+
+      setPdfViewUrl(doc.output("bloburl") as unknown as string);
+      setPdfViewOpen(true);
     } catch (error) {
       console.error(error);
       setBudgetErr("Ocurrió un error al generar el presupuesto.");
@@ -1010,7 +1079,12 @@ export default function SalesContent({
 
                 <TableBody>
                   {filteredSales.map((s) => (
-                    <TableRow key={s.id} className="border-t">
+                    <TableRow
+                      key={s.id}
+                      className={`border-t ${
+                        s.status === "cancelled" ? "bg-red-50" : ""
+                      }`}
+                    >
                       <TableCell className="p-3 whitespace-nowrap">
                         {new Date(s.sold_at).toLocaleString("es-AR")}
                       </TableCell>
@@ -1069,26 +1143,45 @@ export default function SalesContent({
                             variant="secondary"
                             size="sm"
                             onClick={() => openEdit(s.id)}
-                            disabled={s.status === "confirmed"}
+                            disabled={
+                              s.status === "confirmed" ||
+                              s.status === "cancelled" ||
+                              s.status === "returned"
+                            }
                           >
                             <Pencil className="mr-2 h-4 w-4" />
                             Agregar ítem
                           </Button>
 
-                          <Button
-                            variant="secondary"
-                            size="sm"
-                            onClick={() => handleGenerateBudgetPdf(s.id)}
-                            disabled={
-                              s.status === "confirmed" ||
-                              budgetLoadingId === s.id
-                            }
-                          >
-                            <NotepadText className="mr-2 h-4 w-4" />
-                            {budgetLoadingId === s.id
-                              ? "Generando..."
-                              : "Presupuesto"}
-                          </Button>
+                          {s.status === "confirmed" ||
+                          s.status === "cancelled" ||
+                          s.status === "returned" ? (
+                            <Button
+                              variant="secondary"
+                              size="sm"
+                              onClick={() => handleViewBudgetPdf(s.id)}
+                              disabled={
+                                !s.budget_number || budgetLoadingId === s.id
+                              }
+                            >
+                              <NotepadText className="mr-2 h-4 w-4" />
+                              {budgetLoadingId === s.id
+                                ? "Generando..."
+                                : "Ver presupuesto"}
+                            </Button>
+                          ) : (
+                            <Button
+                              variant="secondary"
+                              size="sm"
+                              onClick={() => handleGenerateBudgetPdf(s.id)}
+                              disabled={budgetLoadingId === s.id}
+                            >
+                              <NotepadText className="mr-2 h-4 w-4" />
+                              {budgetLoadingId === s.id
+                                ? "Generando..."
+                                : "Presupuesto"}
+                            </Button>
+                          )}
 
                           <Button
                             variant="default"
@@ -1764,7 +1857,7 @@ export default function SalesContent({
                               : ""}
                           </div>
                         </div>
-                        {sale && sale.status !== "confirmed" ? (
+                        {sale && sale.status === "pending" ? (
                           <Button
                             size="sm"
                             variant="outline"
@@ -2321,7 +2414,34 @@ export default function SalesContent({
           </DialogFooter>
         </DialogContent>
       </Dialog>
-      
+
+      <Dialog
+        open={pdfViewOpen}
+        onOpenChange={(open) => {
+          setPdfViewOpen(open);
+          if (!open) setPdfViewUrl(null);
+        }}
+      >
+        <DialogContent className="!w-[90vw] !max-w-4xl !h-[90vh] flex flex-col">
+          <DialogHeader>
+            <DialogTitle>Presupuesto entregado al cliente</DialogTitle>
+          </DialogHeader>
+
+          {pdfViewUrl ? (
+            <iframe
+              src={pdfViewUrl}
+              className="w-full flex-1 rounded-md border"
+              title="Presupuesto"
+            />
+          ) : null}
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setPdfViewOpen(false)}>
+              Cerrar
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

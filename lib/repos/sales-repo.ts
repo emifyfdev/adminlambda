@@ -451,10 +451,14 @@ export async function refreshSalePrices(saleId: string) {
     };
   }
 
-  if (sale.status === "confirmed") {
+  if (
+    sale.status === "confirmed" ||
+    sale.status === "cancelled" ||
+    sale.status === "returned"
+  ) {
     return {
       ok: false as const,
-      error: "La venta está confirmada. No se puede actualizar.",
+      error: "La venta ya está cerrada/cancelada. No se puede actualizar.",
     };
   }
 
