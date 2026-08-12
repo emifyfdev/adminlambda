@@ -7,6 +7,7 @@ const csp = [
   "img-src 'self' data: blob: https://*.googleusercontent.com",
   "font-src 'self' data:",
   `connect-src 'self' ${SUPABASE_ORIGIN} wss://${SUPABASE_ORIGIN.replace("https://", "")}`,
+  "frame-src 'self' blob:",
   "frame-ancestors 'none'",
   "base-uri 'self'",
   "form-action 'self'",
