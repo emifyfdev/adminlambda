@@ -165,6 +165,13 @@ export interface AuditLog {
 }
 
 
+export const CANCEL_REASONS = [
+  "Presupuesto no aceptado",
+  "Error de carga",
+] as const;
+
+export type CancelReason = (typeof CANCEL_REASONS)[number];
+
 export const PAYMENT_METHODS = [
   "EFECTIVO",
   "TRANSFERENCIA",

@@ -7,6 +7,7 @@ import { SALES_CHANNELS, type SalesChannel } from "@/lib/types";
 import { PAYMENT_METHODS, type PaymentMethod } from "@/lib/types";
 import { COMPLEXITY_ADDONS, type ComplexityAddonKey } from "@/lib/types";
 import { BIOMODELO_VISUALIZADOR_RATE, getBiomodeloBaseUnitPrice } from "@/lib/types";
+import { CANCEL_REASONS } from "@/lib/types";
 import {
   createSaleWithItems,
   getSaleDetail,
@@ -14,12 +15,14 @@ import {
   refreshSalePrices,
   updateSaleItemCost,
   assignBudgetNumber,
+  cancelSale,
   type SaleStatus,
 } from "@/lib/repos/sales-repo";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -52,6 +55,7 @@ import {
   NotepadText,
   Eye,
   LockKeyhole,
+  Ban,
 } from "lucide-react";
 
 import jsPDF from "jspdf";
@@ -257,6 +261,21 @@ export default function SalesContent({
     setInvoiceNumber("");
     setPaid(true);
     setCloseOpen(true);
+  }
+
+  const [cancelOpen, setCancelOpen] = useState(false);
+  const [cancelSaleId, setCancelSaleId] = useState<string | null>(null);
+  const [cancelReason, setCancelReason] = useState<string>(CANCEL_REASONS[0]);
+  const [cancelObservation, setCancelObservation] = useState("");
+  const [cancelSaving, setCancelSaving] = useState(false);
+  const [cancelErr, setCancelErr] = useState<string | null>(null);
+
+  function openCancel(saleId: string) {
+    setCancelErr(null);
+    setCancelSaleId(saleId);
+    setCancelReason(CANCEL_REASONS[0]);
+    setCancelObservation("");
+    setCancelOpen(true);
   }
 
   // Step 1
@@ -1083,6 +1102,20 @@ export default function SalesContent({
                           >
                             <LockKeyhole className="mr-2 h-4 w-4" />
                             Cerrar
+                          </Button>
+
+                          <Button
+                            variant="destructive"
+                            size="sm"
+                            onClick={() => openCancel(s.id)}
+                            disabled={
+                              s.status === "confirmed" ||
+                              s.status === "cancelled" ||
+                              s.status === "returned"
+                            }
+                          >
+                            <Ban className="mr-2 h-4 w-4" />
+                            Cancelar
                           </Button>
                         </div>
                       </TableCell>
@@ -2203,6 +2236,87 @@ export default function SalesContent({
               disabled={closeSaving || !closeSaleId}
             >
               {closeSaving ? "Cerrando..." : "Cerrar venta"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={cancelOpen} onOpenChange={setCancelOpen}>
+        <DialogContent className="!w-[88vw] !max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Cancelar venta</DialogTitle>
+          </DialogHeader>
+
+          {cancelErr ? (
+            <Alert variant="destructive">
+              <AlertDescription>{cancelErr}</AlertDescription>
+            </Alert>
+          ) : null}
+
+          <div className="grid gap-4">
+            <div className="grid gap-2">
+              <Label>Motivo de rechazo</Label>
+              <Select
+                value={cancelReason}
+                onValueChange={(v) => setCancelReason(v)}
+              >
+                <SelectTrigger className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {CANCEL_REASONS.map((r) => (
+                    <SelectItem key={r} value={r}>
+                      {r}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="grid gap-2">
+              <Label>Observación (opcional)</Label>
+              <Textarea
+                value={cancelObservation}
+                onChange={(e) => setCancelObservation(e.target.value)}
+                placeholder="Detalle adicional, por las dudas..."
+                rows={3}
+              />
+            </div>
+          </div>
+
+          <DialogFooter className="mt-4">
+            <Button
+              variant="outline"
+              onClick={() => setCancelOpen(false)}
+              disabled={cancelSaving}
+            >
+              Volver
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={async () => {
+                setCancelErr(null);
+                if (!cancelSaleId) return;
+
+                setCancelSaving(true);
+                try {
+                  const res = await cancelSale({
+                    saleId: cancelSaleId,
+                    reason: cancelReason,
+                    observation: cancelObservation,
+                  });
+
+                  if (!res.ok) return setCancelErr(res.error);
+
+                  setCancelOpen(false);
+                  router.refresh();
+                } finally {
+                  setCancelSaving(false);
+                }
+              }}
+              disabled={cancelSaving || !cancelSaleId}
+            >
+              {cancelSaving ? "Cancelando..." : "Cancelar venta"}
             </Button>
           </DialogFooter>
         </DialogContent>
