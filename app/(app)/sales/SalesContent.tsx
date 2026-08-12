@@ -1010,7 +1010,12 @@ export default function SalesContent({
 
                 <TableBody>
                   {filteredSales.map((s) => (
-                    <TableRow key={s.id} className="border-t">
+                    <TableRow
+                      key={s.id}
+                      className={`border-t ${
+                        s.status === "cancelled" ? "bg-red-50" : ""
+                      }`}
+                    >
                       <TableCell className="p-3 whitespace-nowrap">
                         {new Date(s.sold_at).toLocaleString("es-AR")}
                       </TableCell>
@@ -1069,7 +1074,11 @@ export default function SalesContent({
                             variant="secondary"
                             size="sm"
                             onClick={() => openEdit(s.id)}
-                            disabled={s.status === "confirmed"}
+                            disabled={
+                              s.status === "confirmed" ||
+                              s.status === "cancelled" ||
+                              s.status === "returned"
+                            }
                           >
                             <Pencil className="mr-2 h-4 w-4" />
                             Agregar ítem
