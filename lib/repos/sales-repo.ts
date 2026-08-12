@@ -394,6 +394,47 @@ export async function updateSaleStatusAndAddItems(input: {
   return { ok: true as const };
 }
 
+export async function cancelSale(input: {
+  saleId: string;
+  reason: string;
+  observation?: string | null;
+}) {
+  const supabase = await createClient();
+
+  const { data: sale, error: saleErr } = await supabase
+    .from("sales")
+    .select("id, status")
+    .eq("id", input.saleId)
+    .single();
+
+  if (saleErr || !sale) {
+    return { ok: false as const, error: saleErr?.message ?? "Venta no existe." };
+  }
+
+  if (sale.status === "confirmed") {
+    return {
+      ok: false as const,
+      error: "La venta ya está confirmada/cerrada. No se puede cancelar.",
+    };
+  }
+
+  const { error } = await supabase
+    .from("sales")
+    .update({
+      status: "cancelled",
+      cancel_reason: input.reason,
+      cancelled_at: new Date().toISOString(),
+      notes: input.observation?.trim() || null,
+    })
+    .eq("id", input.saleId);
+
+  if (error) return { ok: false as const, error: error.message };
+
+  revalidatePath("/sales");
+  revalidatePath("/dashboard");
+  return { ok: true as const };
+}
+
 export async function refreshSalePrices(saleId: string) {
   const supabase = await createClient();
 
