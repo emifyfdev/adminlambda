@@ -92,6 +92,7 @@ type SaleRow = {
   company_profit?: number | null;
   invoice_number?: string | null;
   budget_number?: number | null;
+  budget_revision?: number | null;
   budget_issued_at?: string | null;
   order_discount?: number | null;
   total_gross?: number | null;
@@ -282,6 +283,18 @@ export default function SalesContent({
     const gross = Number(sale.total_gross) || 0;
     const itemsDiscount = Number(sale.total_discount) || 0;
     return Math.max(0, gross - itemsDiscount);
+  }
+
+  // Si el presupuesto ya fue emitido y después se le cambió el descuento
+  // adicional, se muestra con sufijo de revisión (ej. 20260010-1) para
+  // distinguirlo del presupuesto original.
+  function budgetNumberLabel(
+    budgetNumber: number | string | null | undefined,
+    budgetRevision?: number | null,
+  ) {
+    if (budgetNumber == null) return null;
+    const rev = Number(budgetRevision) || 0;
+    return rev > 0 ? `${budgetNumber}-${rev}` : String(budgetNumber);
   }
 
   function openDiscount(saleId: string) {
@@ -698,7 +711,10 @@ export default function SalesContent({
         return;
       }
 
-      const budgetNumber = String(budgetRes.budgetNumber);
+      const budgetNumber = budgetNumberLabel(
+        budgetRes.budgetNumber,
+        sale.budget_revision,
+      )!;
 
       const { doc } = await buildBudgetDoc({
         sale,
@@ -746,7 +762,10 @@ export default function SalesContent({
         sale,
         seller,
         detailItems: res.items ?? [],
-        budgetNumber: String(sale.budget_number),
+        budgetNumber: budgetNumberLabel(
+          sale.budget_number,
+          sale.budget_revision,
+        )!,
         emissionDate: sale.budget_issued_at
           ? new Date(sale.budget_issued_at)
           : new Date(sale.sold_at),
@@ -1924,7 +1943,11 @@ export default function SalesContent({
                             Número de factura {sale?.invoice_number}
                           </div>
                           <div className="text-sm text-muted-foreground">
-                            N° presupuesto {sale?.budget_number ?? "-"}
+                            N° presupuesto{" "}
+                            {budgetNumberLabel(
+                              sale?.budget_number,
+                              sale?.budget_revision,
+                            ) ?? "-"}
                           </div>
                           <div className="text-sm text-muted-foreground">
                             Emitido:{" "}
@@ -2033,6 +2056,10 @@ export default function SalesContent({
                           0,
                         );
                         const orderDiscount = Number(sale?.order_discount) || 0;
+                        const orderDiscountPct = (() => {
+                          const base = orderDiscountBase(sale);
+                          return base > 0 ? (orderDiscount / base) * 100 : 0;
+                        })();
                         const netSale = Math.max(
                           0,
                           grossTotal - discountTotal - orderDiscount,
@@ -2078,8 +2105,12 @@ export default function SalesContent({
                                   </div>
                                   {orderDiscount > 0 ? (
                                     <div className="mt-1 text-xs text-muted-foreground">
-                                      Incluye descuento adicional: -$
-                                      {orderDiscount.toLocaleString("es-AR")}
+                                      Desc. adicional:{" "}
+                                      {orderDiscountPct.toLocaleString(
+                                        "es-AR",
+                                        { maximumFractionDigits: 2 },
+                                      )}
+                                      %
                                     </div>
                                   ) : null}
                                 </CardContent>
@@ -2280,12 +2311,6 @@ export default function SalesContent({
                                     {(
                                       discountTotal + orderDiscount
                                     ).toLocaleString("es-AR")}
-                                    {orderDiscount > 0 ? (
-                                      <div className="text-xs font-normal text-muted-foreground">
-                                        incl. desc. adicional -$
-                                        {orderDiscount.toLocaleString("es-AR")}
-                                      </div>
-                                    ) : null}
                                   </td>
                                   <td className="p-3 text-right font-bold text-green-600">
                                     ${netSale.toLocaleString("es-AR")}
