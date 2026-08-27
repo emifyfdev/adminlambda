@@ -92,6 +92,7 @@ type SaleRow = {
   invoice_number?: string | null;
   budget_number?: number | null;
   budget_issued_at?: string | null;
+  order_discount?: number | null;
 };
 
 type Props = {
@@ -255,6 +256,22 @@ export default function SalesContent({
   const [budgetErr, setBudgetErr] = useState<string | null>(null);
   const [pdfViewOpen, setPdfViewOpen] = useState(false);
   const [pdfViewUrl, setPdfViewUrl] = useState<string | null>(null);
+
+  const [discountOpen, setDiscountOpen] = useState(false);
+  const [discountSaleId, setDiscountSaleId] = useState<string | null>(null);
+  const [discountValue, setDiscountValue] = useState("");
+  const [discountSaving, setDiscountSaving] = useState(false);
+  const [discountErr, setDiscountErr] = useState<string | null>(null);
+
+  function openDiscount(saleId: string) {
+    setDiscountErr(null);
+    setDiscountSaleId(saleId);
+    const sale = salesIniciales.find((x) => x.id === saleId);
+    setDiscountValue(
+      sale?.order_discount ? String(sale.order_discount) : "",
+    );
+    setDiscountOpen(true);
+  }
 
   function openClose(saleId: string) {
     setCloseErr(null);
@@ -458,7 +475,9 @@ export default function SalesContent({
         }
       }
 
-      const totalFinal = rows.reduce((acc, r) => acc + r.total, 0);
+      const itemsTotal = rows.reduce((acc, r) => acc + r.total, 0);
+      const orderDiscount = Number(sale.order_discount) || 0;
+      const totalFinal = Math.max(0, itemsTotal - orderDiscount);
 
       const emissionDateText = emissionDate.toLocaleDateString("es-AR");
       const expirationDateText = expirationDate.toLocaleDateString("es-AR");
@@ -577,13 +596,30 @@ export default function SalesContent({
         (doc as jsPDF & { lastAutoTable?: { finalY: number } }).lastAutoTable
           ?.finalY ?? tableStartY + 20;
 
+      let totalY = finalY + 14;
+
+      if (orderDiscount > 0) {
+        doc.setFont("helvetica", "normal");
+        doc.setFontSize(10);
+        doc.text(`Subtotal: ${formatMoney(itemsTotal, currency)}`, 14, totalY);
+        totalY += 6;
+        doc.text(
+          `Descuento adicional: -${formatMoney(orderDiscount, currency)}`,
+          14,
+          totalY,
+        );
+        totalY += 10;
+      }
+
       doc.setFont("helvetica", "bold");
       doc.setFontSize(13);
       doc.text(
         `PRECIO TOTAL: ${formatMoney(totalFinal, currency)}`,
         14,
-        finalY + 14,
+        totalY,
       );
+
+      const footerY = totalY + 10;
 
       doc.setFont("helvetica", "normal");
       doc.setFontSize(9);
@@ -596,7 +632,7 @@ export default function SalesContent({
           "MANTENIMIENTO DE LA OFERTA: La presente oferta será válida por un plazo de 15 días.",
         ];
 
-        let paragraphY = finalY + 24;
+        let paragraphY = footerY;
         for (const paragraph of paragraphs) {
           const lines = doc.splitTextToSize(paragraph, maxWidth);
           doc.text(lines, 14, paragraphY);
@@ -606,7 +642,7 @@ export default function SalesContent({
         doc.text(
           "Presupuesto válido por 15 días. Documento no fiscal.",
           14,
-          finalY + 24,
+          footerY,
         );
       }
 
@@ -1882,18 +1918,29 @@ export default function SalesContent({
                           </div>
                         </div>
                         {sale && sale.status === "pending" ? (
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={async () => {
-                              const res = await refreshSalePrices(sale.id);
-                              if (!res.ok) return setViewErr(res.error);
-                              await openView(sale.id);
-                              router.refresh();
-                            }}
-                          >
-                            Actualizar precios
-                          </Button>
+                          <div className="flex gap-2">
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={async () => {
+                                const res = await refreshSalePrices(sale.id);
+                                if (!res.ok) return setViewErr(res.error);
+                                await openView(sale.id);
+                                router.refresh();
+                              }}
+                            >
+                              Actualizar precios
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => openDiscount(sale.id)}
+                            >
+                              {sale.order_discount
+                                ? "Editar descuento"
+                                : "Agregar descuento"}
+                            </Button>
+                          </div>
                         ) : null}
                         <div className="flex flex-wrap items-center gap-2">
                           <Badge variant="secondary" className="rounded-full">
@@ -1963,7 +2010,11 @@ export default function SalesContent({
                           (a, r) => a + r.disc,
                           0,
                         );
-                        const netSale = Math.max(0, grossTotal - discountTotal);
+                        const orderDiscount = Number(sale?.order_discount) || 0;
+                        const netSale = Math.max(
+                          0,
+                          grossTotal - discountTotal - orderDiscount,
+                        );
                         const costTotal = rows.reduce((a, r) => a + r.cost, 0);
 
                         const commissionBasisTotal = rows.reduce(
@@ -2003,6 +2054,12 @@ export default function SalesContent({
                                   <div className="mt-1 text-2xl font-semibold">
                                     ${netSale.toLocaleString("es-AR")}
                                   </div>
+                                  {orderDiscount > 0 ? (
+                                    <div className="mt-1 text-xs text-muted-foreground">
+                                      Incluye descuento adicional: -$
+                                      {orderDiscount.toLocaleString("es-AR")}
+                                    </div>
+                                  ) : null}
                                 </CardContent>
                               </Card>
 
@@ -2462,6 +2519,75 @@ export default function SalesContent({
           <DialogFooter>
             <Button variant="outline" onClick={() => setPdfViewOpen(false)}>
               Cerrar
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={discountOpen} onOpenChange={setDiscountOpen}>
+        <DialogContent className="!w-[88vw] !max-w-md">
+          <DialogHeader>
+            <DialogTitle>Agregar descuento</DialogTitle>
+          </DialogHeader>
+
+          {discountErr ? (
+            <Alert variant="destructive">
+              <AlertDescription>{discountErr}</AlertDescription>
+            </Alert>
+          ) : null}
+
+          <div className="grid gap-2">
+            <Label>Monto de descuento</Label>
+            <Input
+              inputMode="decimal"
+              value={discountValue}
+              onChange={(e) => setDiscountValue(e.target.value)}
+              placeholder="Ej: 50"
+            />
+            <p className="text-xs text-muted-foreground">
+              Se resta del total del presupuesto. Dejalo en 0 (o vacío) para
+              quitar el descuento.
+            </p>
+          </div>
+
+          <DialogFooter className="mt-4">
+            <Button
+              variant="outline"
+              onClick={() => setDiscountOpen(false)}
+              disabled={discountSaving}
+            >
+              Cancelar
+            </Button>
+            <Button
+              onClick={async () => {
+                setDiscountErr(null);
+                if (!discountSaleId) return;
+
+                const sale = salesIniciales.find(
+                  (x) => x.id === discountSaleId,
+                );
+                if (!sale) return;
+
+                setDiscountSaving(true);
+                try {
+                  const res = await updateSaleStatusAndAddItems({
+                    saleId: discountSaleId,
+                    status: sale.status,
+                    order_discount: Number(discountValue) || 0,
+                  });
+
+                  if (!res.ok) return setDiscountErr(res.error);
+
+                  setDiscountOpen(false);
+                  await openView(discountSaleId);
+                  router.refresh();
+                } finally {
+                  setDiscountSaving(false);
+                }
+              }}
+              disabled={discountSaving || !discountSaleId}
+            >
+              {discountSaving ? "Guardando..." : "Guardar descuento"}
             </Button>
           </DialogFooter>
         </DialogContent>
