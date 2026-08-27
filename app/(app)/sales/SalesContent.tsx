@@ -2276,7 +2276,16 @@ export default function SalesContent({
                                     ${grossTotal.toLocaleString("es-AR")}
                                   </td>
                                   <td className="p-3 text-right font-medium text-red-600">
-                                    -${discountTotal.toLocaleString("es-AR")}
+                                    -$
+                                    {(
+                                      discountTotal + orderDiscount
+                                    ).toLocaleString("es-AR")}
+                                    {orderDiscount > 0 ? (
+                                      <div className="text-xs font-normal text-muted-foreground">
+                                        incl. desc. adicional -$
+                                        {orderDiscount.toLocaleString("es-AR")}
+                                      </div>
+                                    ) : null}
                                   </td>
                                   <td className="p-3 text-right font-bold text-green-600">
                                     ${netSale.toLocaleString("es-AR")}
