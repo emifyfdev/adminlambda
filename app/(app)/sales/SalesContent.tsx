@@ -162,11 +162,18 @@ function describeItemOptions(options: SaleItemOptions | null | undefined) {
     : options.complexity.label;
 }
 
-function nowGMTMinus3ForDatetimeLocal() {
+// Hora actual del navegador (asumiendo que quien carga la venta está en
+// Argentina) en el formato que espera un <input type="datetime-local">.
+// El envío del formulario (new Date(soldAt).toISOString()) interpreta este
+// string como hora local del navegador, así que acá NO hay que forzar
+// ningún offset de GMT-3 a mano — eso duplicaba el corrimiento cuando el
+// navegador ya estaba en GMT-3 (bug: la fecha quedaba 3hs adelantada).
+function nowForDatetimeLocal() {
   const now = new Date();
-  const utc = now.getTime() + now.getTimezoneOffset() * 60000;
-  const gmt3 = new Date(utc - 3 * 60 * 60000);
-  return gmt3.toISOString().slice(0, 16); // YYYY-MM-DDTHH:mm
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(
+    now.getDate(),
+  )}T${pad(now.getHours())}:${pad(now.getMinutes())}`;
 }
 
 function pct(rate: number) {
@@ -299,7 +306,7 @@ export default function SalesContent({
   }
 
   // Step 1
-  const [soldAt, setSoldAt] = useState(() => nowGMTMinus3ForDatetimeLocal());
+  const [soldAt, setSoldAt] = useState(() => nowForDatetimeLocal());
   const [customerName, setCustomerName] = useState("");
   const [channel, setChannel] = useState<SalesChannel>("PÚBLICO");
   const [status, setStatus] = useState<SaleStatus>("pending");
@@ -355,7 +362,7 @@ export default function SalesContent({
   function openCreate() {
     setErr(null);
     setStep(1);
-    setSoldAt(nowGMTMinus3ForDatetimeLocal());
+    setSoldAt(nowForDatetimeLocal());
     setCustomerName("");
     setChannel("PÚBLICO");
     setStatus("pending");
