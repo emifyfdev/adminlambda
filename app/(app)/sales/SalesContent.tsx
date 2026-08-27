@@ -94,6 +94,8 @@ type SaleRow = {
   budget_number?: number | null;
   budget_issued_at?: string | null;
   order_discount?: number | null;
+  total_gross?: number | null;
+  total_discount?: number | null;
 };
 
 type Props = {
@@ -271,12 +273,26 @@ export default function SalesContent({
   const [discountSaving, setDiscountSaving] = useState(false);
   const [discountErr, setDiscountErr] = useState<string | null>(null);
 
+  // Base sobre la que se calcula el % de descuento adicional: el neto de
+  // la venta ya con los descuentos por ítem aplicados, pero SIN el
+  // descuento adicional (para que cambiar el % siempre sea idempotente,
+  // sin ir componiendo sobre un descuento previo).
+  function orderDiscountBase(sale: SaleRow | undefined) {
+    if (!sale) return 0;
+    const gross = Number(sale.total_gross) || 0;
+    const itemsDiscount = Number(sale.total_discount) || 0;
+    return Math.max(0, gross - itemsDiscount);
+  }
+
   function openDiscount(saleId: string) {
     setDiscountErr(null);
     setDiscountSaleId(saleId);
     const sale = salesIniciales.find((x) => x.id === saleId);
+    const base = orderDiscountBase(sale);
+    const currentAmount = Number(sale?.order_discount) || 0;
+    const currentPct = base > 0 ? (currentAmount / base) * 100 : 0;
     setDiscountValue(
-      sale?.order_discount ? String(sale.order_discount) : "",
+      currentPct > 0 ? String(Math.round(currentPct * 100) / 100) : "",
     );
     setDiscountOpen(true);
   }
@@ -2541,16 +2557,16 @@ export default function SalesContent({
           ) : null}
 
           <div className="grid gap-2">
-            <Label>Monto de descuento</Label>
+            <Label>Descuento (%)</Label>
             <Input
               inputMode="decimal"
               value={discountValue}
               onChange={(e) => setDiscountValue(e.target.value)}
-              placeholder="Ej: 50"
+              placeholder="Ej: 20"
             />
             <p className="text-xs text-muted-foreground">
-              Se resta del total del presupuesto. Dejalo en 0 (o vacío) para
-              quitar el descuento.
+              Porcentaje sobre el total de la venta (después de bonificaciones
+              por ítem). Dejalo en 0 (o vacío) para quitar el descuento.
             </p>
           </div>
 
@@ -2572,12 +2588,20 @@ export default function SalesContent({
                 );
                 if (!sale) return;
 
+                const pctNum =
+                  Number(String(discountValue).replace("%", "").trim()) || 0;
+                const pctClamped = Math.max(0, Math.min(100, pctNum));
+                const base = orderDiscountBase(sale);
+                const orderDiscountAmount = Math.round(
+                  (pctClamped / 100) * base,
+                );
+
                 setDiscountSaving(true);
                 try {
                   const res = await updateSaleStatusAndAddItems({
                     saleId: discountSaleId,
                     status: sale.status,
-                    order_discount: Number(discountValue) || 0,
+                    order_discount: orderDiscountAmount,
                   });
 
                   if (!res.ok) return setDiscountErr(res.error);
