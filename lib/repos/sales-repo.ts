@@ -317,6 +317,14 @@ export async function updateSaleStatusAndAddItems(input: {
 }) {
   const supabase = await createClient();
 
+  const { data: saleRow, error: saleRowErr } = await supabase
+    .from("sales")
+    .select("budget_number, order_discount, budget_revision")
+    .eq("id", input.saleId)
+    .single();
+
+  if (saleRowErr) return { ok: false as const, error: saleRowErr.message };
+
   const { data: existing, error: exErr } = await supabase
     .from("sale_items")
     .select("qty, unit_price, discount")
@@ -362,8 +370,25 @@ export async function updateSaleStatusAndAddItems(input: {
 
   const gross = baseGross + addGross;
   const discount = baseDiscount + addDiscount;
-  const orderDiscount = toNum(input.order_discount);
+  // Si esta llamada no trae order_discount (ej. al agregar un ítem o cerrar
+  // la venta), se conserva el descuento adicional ya guardado en vez de
+  // resetearlo a 0.
+  const orderDiscount =
+    input.order_discount !== undefined
+      ? toNum(input.order_discount)
+      : toNum(saleRow?.order_discount);
   const net = Math.max(0, gross - discount - orderDiscount);
+
+  // Si el presupuesto ya fue emitido y el descuento adicional cambia,
+  // marcamos una nueva revisión (20260010 -> 20260010-1) para que el
+  // número de presupuesto refleje que las condiciones cambiaron.
+  let budgetRevision = saleRow?.budget_revision ?? 0;
+  if (
+    saleRow?.budget_number != null &&
+    orderDiscount !== toNum(saleRow?.order_discount)
+  ) {
+    budgetRevision += 1;
+  }
 
   const { error: upErr } = await supabase
     .from("sales")
@@ -373,6 +398,7 @@ export async function updateSaleStatusAndAddItems(input: {
       total_discount: discount,
       total_net: net,
       order_discount: orderDiscount,
+      budget_revision: budgetRevision,
       payment_method: input.payment_method ?? undefined,
       invoice_number: input.invoice_number ?? undefined,
       paid_at: input.paid ? new Date().toISOString() : undefined,
