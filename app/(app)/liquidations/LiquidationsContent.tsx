@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 import { Plus, Eye, Lock, CheckCircle, FileText } from "lucide-react";
+import { formatDateTimeAR, formatDateAR } from "@/lib/utils";
 import {
   Card,
   CardContent,
@@ -189,7 +190,7 @@ async function handleGenerateSellerPdfs(liq: LiquidationRow) {
         (seller?.sales_team ? ` (${seller.sales_team})` : "");
 
       const rows = sellerSales.map((sale) => ({
-        date: new Date(sale.sold_at).toLocaleDateString("es-AR"),
+        date: formatDateAR(sale.sold_at),
         customer: sale.customer_name ?? "-",
         totalSale: Number(sale.total_net || 0),
         commissionPct: Math.round(
@@ -225,7 +226,7 @@ async function handleGenerateSellerPdfs(liq: LiquidationRow) {
       // doc.text(`ID Liquidación: ${liq.id}`, rightX, y);
 
       y += 10;
-      doc.text(`Fecha de emisión: ${new Date().toLocaleDateString("es-AR")}`, rightX, y);
+      doc.text(`Fecha de emisión: ${formatDateAR(new Date())}`, rightX, y);
 
       y += 7;
       doc.text(`Período: ${periodText}`, rightX, y);
@@ -712,7 +713,7 @@ async function handleGenerateSellerPdfs(liq: LiquidationRow) {
                       </TableCell>
 
                       <TableCell className="p-3 text-sm text-muted-foreground whitespace-nowrap">
-                        {new Date(liq.created_at).toLocaleString("es-AR")}
+                        {formatDateTimeAR(liq.created_at)}
                       </TableCell>
 
                       <TableCell className="pr-4 p-3 text-left">

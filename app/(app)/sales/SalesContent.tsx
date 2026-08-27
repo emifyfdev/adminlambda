@@ -8,6 +8,7 @@ import { PAYMENT_METHODS, type PaymentMethod } from "@/lib/types";
 import { COMPLEXITY_ADDONS, type ComplexityAddonKey } from "@/lib/types";
 import { BIOMODELO_VISUALIZADOR_RATE, getBiomodeloBaseUnitPrice } from "@/lib/types";
 import { CANCEL_REASONS } from "@/lib/types";
+import { formatDateTimeAR, formatDateAR } from "@/lib/utils";
 import {
   createSaleWithItems,
   getSaleDetail,
@@ -479,8 +480,8 @@ export default function SalesContent({
       const orderDiscount = Number(sale.order_discount) || 0;
       const totalFinal = Math.max(0, itemsTotal - orderDiscount);
 
-      const emissionDateText = emissionDate.toLocaleDateString("es-AR");
-      const expirationDateText = expirationDate.toLocaleDateString("es-AR");
+      const emissionDateText = formatDateAR(emissionDate);
+      const expirationDateText = formatDateAR(expirationDate);
 
       const doc = new jsPDF();
       const pageWidth = doc.internal.pageSize.getWidth();
@@ -761,7 +762,7 @@ export default function SalesContent({
         sale.channel ?? "",
         sale.status ?? "",
         sellerName,
-        new Date(sale.sold_at).toLocaleString("es-AR"),
+        formatDateTimeAR(sale.sold_at),
         sale.total_net != null ? String(sale.total_net) : "",
       ]
         .join(" ")
@@ -1146,7 +1147,7 @@ export default function SalesContent({
                       }`}
                     >
                       <TableCell className="p-3 whitespace-nowrap">
-                        {new Date(s.sold_at).toLocaleString("es-AR")}
+                        {formatDateTimeAR(s.sold_at)}
                       </TableCell>
 
                       <TableCell className="p-3">
@@ -1905,9 +1906,7 @@ export default function SalesContent({
                           <div className="text-sm text-muted-foreground">
                             Emitido:{" "}
                             {sale?.budget_issued_at
-                              ? new Date(sale.budget_issued_at).toLocaleString(
-                                  "es-AR",
-                                )
+                              ? formatDateTimeAR(sale.budget_issued_at)
                               : "-"}
                           </div>
                           <div className="text-base font-semibold">
@@ -2135,9 +2134,7 @@ export default function SalesContent({
                                 </span>
                                 <span className="font-medium">
                                   {sale
-                                    ? new Date(sale.sold_at).toLocaleString(
-                                        "es-AR",
-                                      )
+                                    ? formatDateTimeAR(sale.sold_at)
                                     : "—"}
                                 </span>
                               </div>

@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { Search, Eye, ArrowRight } from "lucide-react";
+import { formatDateTimeAR } from "@/lib/utils";
 import {
   Card,
   CardContent,
@@ -227,7 +228,7 @@ export default function AuditContent({ logsIniciales }: Props) {
                   {filtered.map((l) => (
                     <TableRow key={l.id} className="border-t">
                       <TableCell className="pl-4 p-3 text-sm text-muted-foreground whitespace-nowrap">
-                        {new Date(l.ts).toLocaleString("es-AR")}
+                        {formatDateTimeAR(l.ts)}
                       </TableCell>
                       <TableCell className="p-3 text-sm font-mono text-muted-foreground whitespace-nowrap">
                         {/* {shortUuid(l.actor_name)} */}
@@ -325,7 +326,7 @@ export default function AuditContent({ logsIniciales }: Props) {
               <div className="space-y-1">
                 <div className="text-xs text-muted-foreground">Fecha</div>
                 <div className="text-sm font-medium">
-                  {new Date(selected.ts).toLocaleString("es-AR")}
+                  {formatDateTimeAR(selected.ts)}
                 </div>
               </div>
 
