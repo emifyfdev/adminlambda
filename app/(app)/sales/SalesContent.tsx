@@ -1185,7 +1185,7 @@ export default function SalesContent({
                     <TableRow
                       key={s.id}
                       className={`border-t ${
-                        s.status === "cancelled" ? "bg-red-50" : ""
+                        s.status === "cancelled" ? "bg-red-400" : ""
                       }`}
                     >
                       <TableCell className="p-3 whitespace-nowrap">
@@ -1215,7 +1215,16 @@ export default function SalesContent({
                       <TableCell className="p-3 whitespace-nowrap">
                         <Badge
                           variant={
-                            s.status === "confirmed" ? "default" : "secondary"
+                            s.status === "confirmed"
+                              ? "default"
+                              : s.status === "cancelled"
+                                ? "destructive"
+                                : "secondary"
+                          }
+                          className={
+                            s.status === "cancelled"
+                              ? "bg-red-600 text-white hover:bg-red-600"
+                              : ""
                           }
                         >
                           {s.status}
