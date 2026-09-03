@@ -488,7 +488,7 @@ export default function SalesContent({
           const baseTotal = Math.max(0, baseGross - baseBonif);
 
           rows.push({
-            product: `${it.product?.name ?? "Producto"} (${complexity.label})`,
+            product: it.product?.name ?? "Producto",
             qty,
             unit: baseUnit,
             bonifAmount: baseBonif,
@@ -511,13 +511,8 @@ export default function SalesContent({
             });
           }
         } else {
-          const optionsDesc = describeItemOptions(it.options);
           rows.push({
-            product: it.product?.name
-              ? optionsDesc
-                ? `${it.product.name} (${optionsDesc})`
-                : it.product.name
-              : "Producto",
+            product: it.product?.name ?? "Producto",
             qty,
             unit,
             bonifAmount,
@@ -716,6 +711,14 @@ export default function SalesContent({
     return { doc, totalFinal };
   }
 
+  function buildBudgetFileName(
+    budgetNumber: string,
+    customerName?: string | null,
+  ) {
+    const cleanName = (customerName ?? "").trim().replace(/[\\/:*?"<>|]+/g, "-");
+    return cleanName ? `${budgetNumber} - ${cleanName}.pdf` : `${budgetNumber}.pdf`;
+  }
+
   async function handleGenerateBudgetPdf(saleId: string) {
     setBudgetErr(null);
     setBudgetLoadingId(saleId);
@@ -754,7 +757,7 @@ export default function SalesContent({
         emissionDate: new Date(),
       });
 
-      doc.save(`${budgetNumber}.pdf`);
+      doc.save(buildBudgetFileName(budgetNumber, sale.customer_name));
       router.refresh();
     } catch (error) {
       console.error(error);
