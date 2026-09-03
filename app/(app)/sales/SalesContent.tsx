@@ -8,6 +8,7 @@ import { PAYMENT_METHODS, type PaymentMethod } from "@/lib/types";
 import { COMPLEXITY_ADDONS, type ComplexityAddonKey } from "@/lib/types";
 import { BIOMODELO_VISUALIZADOR_RATE, getBiomodeloBaseUnitPrice } from "@/lib/types";
 import { CANCEL_REASONS } from "@/lib/types";
+import { DISCOUNT_REASONS, getDiscountReasonNote } from "@/lib/types";
 import { formatDateTimeAR, formatDateAR } from "@/lib/utils";
 import {
   createSaleWithItems,
@@ -111,6 +112,7 @@ type ItemForm = {
   qty: string;
   unit_price: string;
   discount: string; // % en el form
+  discount_reason?: string; // motivo del descuento (solo si discount > 0)
   complexityLabel?: string; // solo productos con niveles de complejidad
   addonKeys?: ComplexityAddonKey[];
 };
@@ -455,6 +457,7 @@ export default function SalesContent({
         bonifAmount: number;
         bonifPct: number;
         total: number;
+        discountReasonNote?: string | null;
       }[] = [];
 
       for (const it of detailItems as any[]) {
@@ -464,6 +467,7 @@ export default function SalesContent({
         const gross = qty * unit;
         const bonifPct = gross > 0 ? (bonifAmount / gross) * 100 : 0;
         const total = Math.max(0, gross - bonifAmount);
+        const discountReasonNote = getDiscountReasonNote(it.discount_reason);
 
         const complexity = it.options?.complexity;
         const addons = it.options?.addons ?? [];
@@ -482,6 +486,7 @@ export default function SalesContent({
             bonifAmount,
             bonifPct: baseGross > 0 ? (bonifAmount / baseGross) * 100 : 0,
             total: baseTotal,
+            discountReasonNote,
           });
 
           for (const addon of addons) {
@@ -508,6 +513,7 @@ export default function SalesContent({
             bonifAmount,
             bonifPct,
             total,
+            discountReasonNote,
           });
         }
       }
@@ -584,14 +590,28 @@ export default function SalesContent({
             "Subtotal",
           ],
         ],
-        body: rows.map((r) => [
-          r.product,
-          String(r.qty),
-          formatMoney(r.unit, currency),
-          `${r.bonifPct.toFixed(0)}%`,
-          formatMoney(r.bonifAmount, currency),
-          formatMoney(r.total, currency),
-        ]),
+        body: rows.flatMap((r): any[] => {
+          const itemRow: any[] = [
+            r.product,
+            String(r.qty),
+            formatMoney(r.unit, currency),
+            `${r.bonifPct.toFixed(0)}%`,
+            formatMoney(r.bonifAmount, currency),
+            formatMoney(r.total, currency),
+          ];
+
+          if (!r.discountReasonNote) return [itemRow];
+
+          const noteRow: any[] = [
+            {
+              content: r.discountReasonNote,
+              colSpan: 6,
+              styles: { fontStyle: "italic", fontSize: 8, textColor: 100 },
+            },
+          ];
+
+          return [itemRow, noteRow];
+        }),
         styles: {
           fontSize: 10,
           cellPadding: 3,
@@ -954,6 +974,10 @@ export default function SalesContent({
         if (i !== idx) return it;
         const next = { ...it, ...patch };
 
+        if (patch.discount !== undefined && (Number(patch.discount) || 0) <= 0) {
+          next.discount_reason = undefined;
+        }
+
         if (patch.product_id) {
           const p = productById.get(patch.product_id);
           if (p?.has_complexity_pricing) {
@@ -997,6 +1021,10 @@ export default function SalesContent({
       prev.map((it, i) => {
         if (i !== idx) return it;
         const next = { ...it, ...patch };
+
+        if (patch.discount !== undefined && (Number(patch.discount) || 0) <= 0) {
+          next.discount_reason = undefined;
+        }
 
         if (patch.product_id) {
           const p = productById.get(patch.product_id);
@@ -1058,6 +1086,7 @@ export default function SalesContent({
             qty,
             unit_price: unit,
             discount: discountAmount, // ✅ guardamos monto en DB
+            discount_reason: pct > 0 ? (it.discount_reason ?? null) : null,
             options: buildItemOptions(
               productById.get(it.product_id),
               it.complexityLabel,
@@ -1100,6 +1129,7 @@ export default function SalesContent({
             qty,
             unit_price: unit,
             discount: discountAmount,
+            discount_reason: pct > 0 ? (it.discount_reason ?? null) : null,
             options: buildItemOptions(
               productById.get(it.product_id),
               it.complexityLabel,
@@ -1565,6 +1595,34 @@ export default function SalesContent({
                         </div>
                       </div>
 
+                      {(Number(it.discount) || 0) > 0 ? (
+                        <div className="mt-3 grid gap-2 max-w-xs">
+                          <Label>Motivo del descuento</Label>
+                          <Select
+                            value={it.discount_reason ?? "none"}
+                            onValueChange={(v) =>
+                              onChangeItem(idx, {
+                                discount_reason: v === "none" ? undefined : v,
+                              })
+                            }
+                          >
+                            <SelectTrigger className="w-full">
+                              <SelectValue placeholder="Sin motivo especificado" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="none">
+                                Sin motivo especificado
+                              </SelectItem>
+                              {DISCOUNT_REASONS.map((r) => (
+                                <SelectItem key={r.key} value={r.key}>
+                                  {r.label}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      ) : null}
+
                       {itemProduct?.has_complexity_pricing ? (
                         <div className="mt-3 space-y-2 rounded-md border border-dashed p-3">
                           <div className="grid gap-2 max-w-xs">
@@ -1847,6 +1905,34 @@ export default function SalesContent({
                           />
                         </div>
                       </div>
+
+                      {(Number(it.discount) || 0) > 0 ? (
+                        <div className="mt-3 grid gap-2 max-w-xs">
+                          <Label>Motivo del descuento</Label>
+                          <Select
+                            value={it.discount_reason ?? "none"}
+                            onValueChange={(v) =>
+                              onChangeEditItem(idx, {
+                                discount_reason: v === "none" ? undefined : v,
+                              })
+                            }
+                          >
+                            <SelectTrigger className="w-full">
+                              <SelectValue placeholder="Sin motivo especificado" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="none">
+                                Sin motivo especificado
+                              </SelectItem>
+                              {DISCOUNT_REASONS.map((r) => (
+                                <SelectItem key={r.key} value={r.key}>
+                                  {r.label}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      ) : null}
 
                       {itemProduct?.has_complexity_pricing ? (
                         <div className="mt-3 space-y-2 rounded-md border border-dashed p-3">

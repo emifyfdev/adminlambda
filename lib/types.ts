@@ -172,6 +172,23 @@ export const CANCEL_REASONS = [
 
 export type CancelReason = (typeof CANCEL_REASONS)[number];
 
+// Motivo del descuento aplicado a un ítem de venta. El texto de `note` se
+// imprime como aclaración en el presupuesto (PDF) debajo del renglón del
+// ítem, para dejar constancia de la condición pactada con el cliente.
+export const DISCOUNT_REASONS = [
+  {
+    key: "advertising_agreement",
+    label: "Descuento por acuerdo publicitario",
+    note: "El cliente le otorga permisos a Lambda 3D para mostrar el caso en sus redes",
+  },
+] as const;
+
+export type DiscountReasonKey = (typeof DISCOUNT_REASONS)[number]["key"];
+
+export function getDiscountReasonNote(key: string | null | undefined) {
+  return DISCOUNT_REASONS.find((r) => r.key === key)?.note ?? null;
+}
+
 export const PAYMENT_METHODS = [
   "EFECTIVO",
   "TRANSFERENCIA",

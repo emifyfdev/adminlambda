@@ -26,6 +26,7 @@ export type SaleItemInsert = {
   qty: number;
   unit_price: number;
   discount: number; // monto descuento
+  discount_reason?: string | null;
   options?: SaleItemOptions;
 };
 
@@ -248,6 +249,7 @@ export async function createSaleWithItems(input: {
     qty: toNum(it.qty),
     unit_price: toNum(it.unit_price),
     discount: toNum(it.discount) || 0,
+    discount_reason: it.discount_reason ?? null,
     options: it.options ?? null,
   }));
 
@@ -294,7 +296,7 @@ export async function getSaleDetail(saleId: string) {
   const { data, error } = await supabase
     .from("sale_items")
     .select(
-      "id, qty, unit_price, discount, cost_at_sale, options, product:products(name, cost)",
+      "id, qty, unit_price, discount, discount_reason, cost_at_sale, options, product:products(name, cost)",
     )
     .eq("sale_id", saleId)
     .order("id", { ascending: true });
@@ -352,6 +354,7 @@ export async function updateSaleStatusAndAddItems(input: {
       qty: toNum(it.qty),
       unit_price: toNum(it.unit_price),
       discount: toNum(it.discount) || 0,
+      discount_reason: it.discount_reason ?? null,
       options: it.options ?? null,
     }));
 
