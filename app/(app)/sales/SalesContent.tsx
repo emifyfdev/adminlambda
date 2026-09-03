@@ -474,30 +474,40 @@ export default function SalesContent({
 
         if (complexity && addons.length) {
           // Biomodelo con adicionales: se detalla como ítems separados
-          // (nivel base + cada adicional), en vez de un único renglón.
+          // (nivel base + cada adicional), en vez de un único renglón. El
+          // % de descuento se cargó sobre el precio TOTAL del ítem (base +
+          // adicionales), así que se reparte ese mismo % en cada renglón
+          // (en vez de restar todo el monto del descuento solo de la
+          // base) para que la bonificación se vea aplicada a todo el
+          // ítem, no solo al nivel de complejidad.
+          const pctFrac = gross > 0 ? bonifAmount / gross : 0;
+
           const baseUnit = Number(complexity.price) || 0;
           const baseGross = baseUnit * qty;
-          const baseTotal = Math.max(0, baseGross - bonifAmount);
+          const baseBonif = baseGross * pctFrac;
+          const baseTotal = Math.max(0, baseGross - baseBonif);
 
           rows.push({
             product: `${it.product?.name ?? "Producto"} (${complexity.label})`,
             qty,
             unit: baseUnit,
-            bonifAmount,
-            bonifPct: baseGross > 0 ? (bonifAmount / baseGross) * 100 : 0,
+            bonifAmount: baseBonif,
+            bonifPct: pctFrac * 100,
             total: baseTotal,
             discountReasonNote,
           });
 
           for (const addon of addons) {
             const addonUnit = baseUnit * (Number(addon.pct) || 0);
+            const addonGross = addonUnit * qty;
+            const addonBonif = addonGross * pctFrac;
             rows.push({
               product: addon.label,
               qty,
               unit: addonUnit,
-              bonifAmount: 0,
-              bonifPct: 0,
-              total: addonUnit * qty,
+              bonifAmount: addonBonif,
+              bonifPct: pctFrac * 100,
+              total: Math.max(0, addonGross - addonBonif),
             });
           }
         } else {
