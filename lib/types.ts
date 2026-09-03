@@ -179,7 +179,7 @@ export const DISCOUNT_REASONS = [
   {
     key: "advertising_agreement",
     label: "Descuento por acuerdo publicitario",
-    note: "El cliente le otorga permisos a Lambda 3D para mostrar el caso en sus redes",
+    note: "El presente descuento se otorga en virtud de la autorización del cliente para que Lambda 3D difunda este caso en sus redes sociales con fines educativos y comerciales.",
   },
 ] as const;
 
