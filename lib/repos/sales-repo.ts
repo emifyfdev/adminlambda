@@ -296,7 +296,7 @@ export async function getSaleDetail(saleId: string) {
   const { data, error } = await supabase
     .from("sale_items")
     .select(
-      "id, qty, unit_price, discount, discount_reason, cost_at_sale, options, product:products(name, cost)",
+      "id, qty, unit_price, discount, discount_reason, cost_at_sale, options, product:products(name, cost, currency)",
     )
     .eq("sale_id", saleId)
     .order("id", { ascending: true });
@@ -316,12 +316,13 @@ export async function updateSaleStatusAndAddItems(input: {
   invoice_number?: string | null;
   paid?: boolean;
   order_discount?: number;
+  usd_ars_rate?: number | null;
 }) {
   const supabase = await createClient();
 
   const { data: saleRow, error: saleRowErr } = await supabase
     .from("sales")
-    .select("budget_number, order_discount, budget_revision")
+    .select("budget_number, order_discount, budget_revision, usd_ars_rate")
     .eq("id", input.saleId)
     .single();
 
@@ -393,6 +394,14 @@ export async function updateSaleStatusAndAddItems(input: {
     budgetRevision += 1;
   }
 
+  // Cotización del dólar (venta) al momento de cerrar una venta en U$D.
+  // Si esta llamada no la trae (ej. Agregar ítem, Editar descuento), se
+  // conserva la que ya estaba guardada.
+  const usdArsRate =
+    input.usd_ars_rate !== undefined
+      ? input.usd_ars_rate
+      : (saleRow?.usd_ars_rate ?? null);
+
   const { error: upErr } = await supabase
     .from("sales")
     .update({
@@ -402,6 +411,7 @@ export async function updateSaleStatusAndAddItems(input: {
       total_net: net,
       order_discount: orderDiscount,
       budget_revision: budgetRevision,
+      usd_ars_rate: usdArsRate,
       payment_method: input.payment_method ?? undefined,
       invoice_number: input.invoice_number ?? undefined,
       paid_at: input.paid ? new Date().toISOString() : undefined,

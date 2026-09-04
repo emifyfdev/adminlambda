@@ -31,6 +31,9 @@ export type ComplexityTier = {
   price: number
 }
 
+export const PRODUCT_CURRENCIES = ["ARS", "USD"] as const
+export type ProductCurrency = (typeof PRODUCT_CURRENCIES)[number]
+
 export type Product = {
   id: string
   name: string
@@ -42,6 +45,7 @@ export type Product = {
   created_at: string
   has_complexity_pricing: boolean
   complexity_tiers: ComplexityTier[] | null
+  currency: ProductCurrency
 }
 
 // Adicionales exclusivos de productos con niveles de complejidad (ej: Biomodelo).

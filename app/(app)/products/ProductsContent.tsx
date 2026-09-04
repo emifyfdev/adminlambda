@@ -3,9 +3,11 @@
 import { useMemo, useState } from "react";
 import {
   PRODUCT_CATEGORIES,
+  PRODUCT_CURRENCIES,
   type Product,
   type ProductStatus,
   type ProductCategory,
+  type ProductCurrency,
 } from "@/lib/types";
 
 import {
@@ -60,6 +62,7 @@ type FormState = {
   status: ProductStatus;
   hasComplexityPricing: boolean;
   tiers: TierForm[];
+  currency: ProductCurrency;
 };
 
 const DEFAULT_TIERS: TierForm[] = [
@@ -94,6 +97,7 @@ function toForm(p?: Product): FormState {
     status: (p?.status ?? "active") as ProductStatus,
     hasComplexityPricing,
     tiers,
+    currency: p?.currency ?? "ARS",
   };
 }
 
@@ -199,6 +203,7 @@ const filteredAndSorted = useMemo(() => {
         status: form.status,
         has_complexity_pricing: form.hasComplexityPricing,
         complexity_tiers: tiers,
+        currency: form.currency,
       };
 
       const res =
@@ -317,20 +322,24 @@ const filteredAndSorted = useMemo(() => {
                       <TableCell className="p-3">{p.category ?? "-"}</TableCell>
                       <TableCell className="p-3">{p.sku ?? "-"}</TableCell>
                       <TableCell className="p-3 whitespace-nowrap">
-                        {p.has_complexity_pricing && p.complexity_tiers?.length ? (
-                          <span title="Precio según nivel de complejidad">
-                            $
-                            {Math.min(
-                              ...p.complexity_tiers.map((t) => t.price),
-                            ).toLocaleString("es-AR")}{" "}
-                            – $
-                            {Math.max(
-                              ...p.complexity_tiers.map((t) => t.price),
-                            ).toLocaleString("es-AR")}
-                          </span>
-                        ) : (
-                          `$${Number(p.list_price).toLocaleString("es-AR")}`
-                        )}
+                        {(() => {
+                          const symbol = p.currency === "USD" ? "US$" : "$";
+                          return p.has_complexity_pricing &&
+                            p.complexity_tiers?.length ? (
+                            <span title="Precio según nivel de complejidad">
+                              {symbol}
+                              {Math.min(
+                                ...p.complexity_tiers.map((t) => t.price),
+                              ).toLocaleString("es-AR")}{" "}
+                              – {symbol}
+                              {Math.max(
+                                ...p.complexity_tiers.map((t) => t.price),
+                              ).toLocaleString("es-AR")}
+                            </span>
+                          ) : (
+                            `${symbol}${Number(p.list_price).toLocaleString("es-AR")}`
+                          );
+                        })()}
                       </TableCell>
                       <TableCell className="p-3 whitespace-nowrap">
                         {p.has_complexity_pricing ? (
@@ -439,6 +448,31 @@ const filteredAndSorted = useMemo(() => {
                 onChange={(e) => setForm({ ...form, sku: e.target.value })}
                 placeholder="Ej: SKU-001"
               />
+            </div>
+
+            <div className="grid gap-2">
+              <Label>Moneda</Label>
+              <Select
+                value={form.currency}
+                onValueChange={(v) =>
+                  setForm({ ...form, currency: v as ProductCurrency })
+                }
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Seleccionar..." />
+                </SelectTrigger>
+                <SelectContent>
+                  {PRODUCT_CURRENCIES.map((c) => (
+                    <SelectItem key={c} value={c}>
+                      {c === "USD" ? "Dólares (USD)" : "Pesos (ARS)"}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">
+                Aplica a todos los precios de este producto (precio único o
+                niveles de complejidad).
+              </p>
             </div>
 
             <div className="flex items-center gap-2 rounded-md border p-3">

@@ -20,6 +20,7 @@ import {
   cancelSale,
   type SaleStatus,
 } from "@/lib/repos/sales-repo";
+import { getUsdArsRate } from "@/lib/repos/exchange-rate-repo";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -96,6 +97,7 @@ type SaleRow = {
   budget_revision?: number | null;
   budget_issued_at?: string | null;
   order_discount?: number | null;
+  usd_ars_rate?: number | null;
   total_gross?: number | null;
   total_discount?: number | null;
 };
@@ -259,6 +261,10 @@ export default function SalesContent({
   const [paid, setPaid] = useState(true);
   const [closeSaving, setCloseSaving] = useState(false);
   const [closeErr, setCloseErr] = useState<string | null>(null);
+  const [closeHasUsd, setCloseHasUsd] = useState(false);
+  const [usdRate, setUsdRate] = useState("");
+  const [usdRateLoading, setUsdRateLoading] = useState(false);
+  const [usdRateFetchErr, setUsdRateFetchErr] = useState<string | null>(null);
   const [q, setQ] = useState("");
   const [statusFilter, setStatusFilter] = useState<"all" | SaleStatus>("all");
   const [sortBy, setSortBy] = useState<
@@ -312,13 +318,37 @@ export default function SalesContent({
     setDiscountOpen(true);
   }
 
-  function openClose(saleId: string) {
+  async function openClose(saleId: string) {
     setCloseErr(null);
     setCloseSaleId(saleId);
     setPaymentMethod("EFECTIVO");
     setInvoiceNumber("");
     setPaid(true);
+    setCloseHasUsd(false);
+    setUsdRate("");
+    setUsdRateFetchErr(null);
     setCloseOpen(true);
+
+    const res = await getSaleDetail(saleId);
+    if (!res.ok) return;
+
+    const hasUsd = res.items.some(
+      (it: any) => it.product?.currency === "USD",
+    );
+    setCloseHasUsd(hasUsd);
+    if (!hasUsd) return;
+
+    setUsdRateLoading(true);
+    try {
+      const rateRes = await getUsdArsRate();
+      if (rateRes.ok) {
+        setUsdRate(String(rateRes.venta));
+      } else {
+        setUsdRateFetchErr(rateRes.error);
+      }
+    } finally {
+      setUsdRateLoading(false);
+    }
   }
 
   const [cancelOpen, setCancelOpen] = useState(false);
@@ -444,8 +474,15 @@ export default function SalesContent({
   }) {
     const { sale, seller, detailItems, budgetNumber, emissionDate } = params;
 
+    // isBiomodelo decide si se muestran las condiciones comerciales
+    // específicas de Biomodelo (independiente de la moneda); la moneda del
+    // presupuesto se decide por la moneda del producto, no por si tiene
+    // niveles de complejidad.
     const isBiomodelo = detailItems.some((it: any) => it.options?.complexity);
-    const currency = isBiomodelo ? "U$D" : "$";
+    const isUsdSale = detailItems.some(
+      (it: any) => it.product?.currency === "USD",
+    );
+    const currency = isUsdSale ? "U$D" : "$";
 
     const expirationDate = new Date(emissionDate);
     expirationDate.setDate(expirationDate.getDate() + 15);
@@ -2116,6 +2153,10 @@ export default function SalesContent({
                         const isBiomodeloView = viewItems.some(
                           (it) => it.options?.complexity,
                         );
+                        const isUsdView = viewItems.some(
+                          (it) => it.product?.currency === "USD",
+                        );
+                        const usdArsRate = Number(sale?.usd_ars_rate) || 0;
 
                         const rows = viewItems.map((it) => {
                           const qty = Number(it.qty) || 0;
@@ -2219,6 +2260,17 @@ export default function SalesContent({
                                         { maximumFractionDigits: 2 },
                                       )}
                                       %
+                                    </div>
+                                  ) : null}
+                                  {isUsdView && usdArsRate > 0 ? (
+                                    <div className="mt-1 text-xs text-muted-foreground">
+                                      ≈ $
+                                      {(netSale * usdArsRate).toLocaleString(
+                                        "es-AR",
+                                        { maximumFractionDigits: 0 },
+                                      )}{" "}
+                                      ARS (TC venta $
+                                      {usdArsRate.toLocaleString("es-AR")})
                                     </div>
                                   ) : null}
                                 </CardContent>
@@ -2527,6 +2579,32 @@ export default function SalesContent({
               />
             </div>
 
+            {closeHasUsd ? (
+              <div className="grid gap-2">
+                <Label>Cotización USD (venta)</Label>
+                <Input
+                  inputMode="decimal"
+                  value={usdRate}
+                  onChange={(e) => setUsdRate(e.target.value)}
+                  placeholder="Ej: 1050"
+                />
+                {usdRateLoading ? (
+                  <p className="text-xs text-muted-foreground">
+                    Buscando cotización...
+                  </p>
+                ) : usdRateFetchErr ? (
+                  <p className="text-xs text-amber-600">
+                    {usdRateFetchErr} Cargala a mano.
+                  </p>
+                ) : (
+                  <p className="text-xs text-muted-foreground">
+                    Precargado con el dólar oficial (venta). Si hace falta,
+                    lo podés editar.
+                  </p>
+                )}
+              </div>
+            ) : null}
+
             <div className="flex items-center justify-between rounded-md border px-3 py-2">
               <span className="text-sm text-muted-foreground">¿Pagado?</span>
               <input
@@ -2550,6 +2628,13 @@ export default function SalesContent({
                 setCloseErr(null);
                 if (!closeSaleId) return;
 
+                const usdRateNum = Number(usdRate);
+                if (closeHasUsd && (!usdRateNum || usdRateNum <= 0)) {
+                  return setCloseErr(
+                    "Ingresá la cotización del dólar para cerrar esta venta.",
+                  );
+                }
+
                 setCloseSaving(true);
                 try {
                   const res = await updateSaleStatusAndAddItems({
@@ -2558,6 +2643,7 @@ export default function SalesContent({
                     payment_method: paymentMethod,
                     invoice_number: invoiceNumber.trim() || null,
                     paid,
+                    usd_ars_rate: closeHasUsd ? usdRateNum : undefined,
                     // no pasamos items acá: cerrar ≠ Agregar ítems
                   });
 

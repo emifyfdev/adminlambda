@@ -3,7 +3,12 @@
 
 import { revalidatePath } from "next/cache"
 import { createClient } from "@/lib/supabase/server"
-import type { ComplexityTier, Product, ProductStatus } from "@/lib/types"
+import type {
+  ComplexityTier,
+  Product,
+  ProductCurrency,
+  ProductStatus,
+} from "@/lib/types"
 
 export type ProductInsert = {
   name: string
@@ -14,6 +19,7 @@ export type ProductInsert = {
   status: ProductStatus
   has_complexity_pricing?: boolean
   complexity_tiers?: ComplexityTier[] | null
+  currency?: ProductCurrency
 }
 
 export type ProductUpdate = ProductInsert & { id: string }
@@ -47,6 +53,7 @@ export async function createProduct(input: ProductInsert) {
     complexity_tiers: input.has_complexity_pricing
       ? (input.complexity_tiers ?? null)
       : null,
+    currency: input.currency ?? "ARS",
   }
 
   const { error } = await supabase.from("products").insert(payload)
@@ -74,6 +81,7 @@ export async function updateProduct(input: ProductUpdate) {
     complexity_tiers: input.has_complexity_pricing
       ? (input.complexity_tiers ?? null)
       : null,
+    currency: input.currency ?? "ARS",
   }
 
   const { error } = await supabase.from("products").update(payload).eq("id", input.id)
