@@ -26,6 +26,7 @@ export type SaleItemInsert = {
   qty: number;
   unit_price: number;
   discount: number; // monto descuento
+  discount_reason?: string | null;
   options?: SaleItemOptions;
 };
 
@@ -43,7 +44,7 @@ async function computeAndFreezeOnConfirm(args: {
   const { data: sale, error: saleErr } = await supabase
     .from("sales")
     .select(
-      "id, commission_plan_id, total_gross, total_discount, total_net, status, order_discount",
+      "id, commission_plan_id, total_gross, total_discount, total_net, status, order_discount, usd_ars_rate",
     )
     .eq("id", saleId)
     .single();
@@ -172,15 +173,27 @@ async function computeAndFreezeOnConfirm(args: {
   const totalCommission = Math.max(0, commissionBase * commissionRate);
   const companyProfit = Math.max(0, netTotal - costTotal - totalCommission);
 
+  // Si la venta es en dólares (tiene cotización cargada al cerrarla), los
+  // totales agregados de `sales` se congelan ya convertidos a pesos: es el
+  // único lugar donde se fijan estos números, y todo lo que los consume
+  // después (Liquidaciones, listado de ventas) espera pesos, porque así es
+  // como se cobra/liquida. Los datos por ítem (sale_items) quedan en su
+  // moneda original para el presupuesto y "Ver venta". order_discount NO
+  // se convierte acá: sigue en moneda original porque "Ver venta" lo
+  // compara contra el bruto/descuento por ítem (también en moneda
+  // original) para mostrar el % de descuento adicional.
+  const fxRate = toNum(sale.usd_ars_rate);
+  const fx = fxRate > 0 ? fxRate : 1;
+
   const { error: upSaleErr } = await supabase
     .from("sales")
     .update({
-      total_gross: grossTotal,
-      total_discount: discountTotal,
-      total_net: netTotal,
-      total_cost: costTotal,
-      total_commission: totalCommission,
-      company_profit: companyProfit,
+      total_gross: grossTotal * fx,
+      total_discount: discountTotal * fx,
+      total_net: netTotal * fx,
+      total_cost: costTotal * fx,
+      total_commission: totalCommission * fx,
+      company_profit: companyProfit * fx,
       commission_rate_at_sale: commissionRate,
       commission_base_calc_at_sale: commissionBaseCalc,
       order_discount: orderDiscount,
@@ -248,6 +261,7 @@ export async function createSaleWithItems(input: {
     qty: toNum(it.qty),
     unit_price: toNum(it.unit_price),
     discount: toNum(it.discount) || 0,
+    discount_reason: it.discount_reason ?? null,
     options: it.options ?? null,
   }));
 
@@ -294,7 +308,7 @@ export async function getSaleDetail(saleId: string) {
   const { data, error } = await supabase
     .from("sale_items")
     .select(
-      "id, qty, unit_price, discount, cost_at_sale, options, product:products(name, cost)",
+      "id, qty, unit_price, discount, discount_reason, cost_at_sale, options, product:products(name, cost, currency)",
     )
     .eq("sale_id", saleId)
     .order("id", { ascending: true });
@@ -314,12 +328,13 @@ export async function updateSaleStatusAndAddItems(input: {
   invoice_number?: string | null;
   paid?: boolean;
   order_discount?: number;
+  usd_ars_rate?: number | null;
 }) {
   const supabase = await createClient();
 
   const { data: saleRow, error: saleRowErr } = await supabase
     .from("sales")
-    .select("budget_number, order_discount, budget_revision")
+    .select("budget_number, order_discount, budget_revision, usd_ars_rate")
     .eq("id", input.saleId)
     .single();
 
@@ -352,6 +367,7 @@ export async function updateSaleStatusAndAddItems(input: {
       qty: toNum(it.qty),
       unit_price: toNum(it.unit_price),
       discount: toNum(it.discount) || 0,
+      discount_reason: it.discount_reason ?? null,
       options: it.options ?? null,
     }));
 
@@ -390,6 +406,14 @@ export async function updateSaleStatusAndAddItems(input: {
     budgetRevision += 1;
   }
 
+  // Cotización del dólar (venta) al momento de cerrar una venta en U$D.
+  // Si esta llamada no la trae (ej. Agregar ítem, Editar descuento), se
+  // conserva la que ya estaba guardada.
+  const usdArsRate =
+    input.usd_ars_rate !== undefined
+      ? input.usd_ars_rate
+      : (saleRow?.usd_ars_rate ?? null);
+
   const { error: upErr } = await supabase
     .from("sales")
     .update({
@@ -399,6 +423,7 @@ export async function updateSaleStatusAndAddItems(input: {
       total_net: net,
       order_discount: orderDiscount,
       budget_revision: budgetRevision,
+      usd_ars_rate: usdArsRate,
       payment_method: input.payment_method ?? undefined,
       invoice_number: input.invoice_number ?? undefined,
       paid_at: input.paid ? new Date().toISOString() : undefined,

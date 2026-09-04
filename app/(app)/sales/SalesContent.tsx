@@ -8,6 +8,7 @@ import { PAYMENT_METHODS, type PaymentMethod } from "@/lib/types";
 import { COMPLEXITY_ADDONS, type ComplexityAddonKey } from "@/lib/types";
 import { BIOMODELO_VISUALIZADOR_RATE, getBiomodeloBaseUnitPrice } from "@/lib/types";
 import { CANCEL_REASONS } from "@/lib/types";
+import { DISCOUNT_REASONS, getDiscountReasonNote } from "@/lib/types";
 import { formatDateTimeAR, formatDateAR } from "@/lib/utils";
 import {
   createSaleWithItems,
@@ -19,6 +20,7 @@ import {
   cancelSale,
   type SaleStatus,
 } from "@/lib/repos/sales-repo";
+import { getUsdArsRate } from "@/lib/repos/exchange-rate-repo";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -95,6 +97,7 @@ type SaleRow = {
   budget_revision?: number | null;
   budget_issued_at?: string | null;
   order_discount?: number | null;
+  usd_ars_rate?: number | null;
   total_gross?: number | null;
   total_discount?: number | null;
 };
@@ -111,6 +114,7 @@ type ItemForm = {
   qty: string;
   unit_price: string;
   discount: string; // % en el form
+  discount_reason?: string; // motivo del descuento (solo si discount > 0)
   complexityLabel?: string; // solo productos con niveles de complejidad
   addonKeys?: ComplexityAddonKey[];
 };
@@ -257,6 +261,10 @@ export default function SalesContent({
   const [paid, setPaid] = useState(true);
   const [closeSaving, setCloseSaving] = useState(false);
   const [closeErr, setCloseErr] = useState<string | null>(null);
+  const [closeHasUsd, setCloseHasUsd] = useState(false);
+  const [usdRate, setUsdRate] = useState("");
+  const [usdRateLoading, setUsdRateLoading] = useState(false);
+  const [usdRateFetchErr, setUsdRateFetchErr] = useState<string | null>(null);
   const [q, setQ] = useState("");
   const [statusFilter, setStatusFilter] = useState<"all" | SaleStatus>("all");
   const [sortBy, setSortBy] = useState<
@@ -310,13 +318,37 @@ export default function SalesContent({
     setDiscountOpen(true);
   }
 
-  function openClose(saleId: string) {
+  async function openClose(saleId: string) {
     setCloseErr(null);
     setCloseSaleId(saleId);
     setPaymentMethod("EFECTIVO");
     setInvoiceNumber("");
     setPaid(true);
+    setCloseHasUsd(false);
+    setUsdRate("");
+    setUsdRateFetchErr(null);
     setCloseOpen(true);
+
+    const res = await getSaleDetail(saleId);
+    if (!res.ok) return;
+
+    const hasUsd = res.items.some(
+      (it: any) => it.product?.currency === "USD",
+    );
+    setCloseHasUsd(hasUsd);
+    if (!hasUsd) return;
+
+    setUsdRateLoading(true);
+    try {
+      const rateRes = await getUsdArsRate();
+      if (rateRes.ok) {
+        setUsdRate(String(rateRes.venta));
+      } else {
+        setUsdRateFetchErr(rateRes.error);
+      }
+    } finally {
+      setUsdRateLoading(false);
+    }
   }
 
   const [cancelOpen, setCancelOpen] = useState(false);
@@ -442,8 +474,15 @@ export default function SalesContent({
   }) {
     const { sale, seller, detailItems, budgetNumber, emissionDate } = params;
 
+    // isBiomodelo decide si se muestran las condiciones comerciales
+    // específicas de Biomodelo (independiente de la moneda); la moneda del
+    // presupuesto se decide por la moneda del producto, no por si tiene
+    // niveles de complejidad.
     const isBiomodelo = detailItems.some((it: any) => it.options?.complexity);
-    const currency = isBiomodelo ? "U$D" : "$";
+    const isUsdSale = detailItems.some(
+      (it: any) => it.product?.currency === "USD",
+    );
+    const currency = isUsdSale ? "U$D" : "$";
 
     const expirationDate = new Date(emissionDate);
     expirationDate.setDate(expirationDate.getDate() + 15);
@@ -455,6 +494,7 @@ export default function SalesContent({
         bonifAmount: number;
         bonifPct: number;
         total: number;
+        discountReasonNote?: string | null;
       }[] = [];
 
       for (const it of detailItems as any[]) {
@@ -464,50 +504,58 @@ export default function SalesContent({
         const gross = qty * unit;
         const bonifPct = gross > 0 ? (bonifAmount / gross) * 100 : 0;
         const total = Math.max(0, gross - bonifAmount);
+        const discountReasonNote = getDiscountReasonNote(it.discount_reason);
 
         const complexity = it.options?.complexity;
         const addons = it.options?.addons ?? [];
 
         if (complexity && addons.length) {
           // Biomodelo con adicionales: se detalla como ítems separados
-          // (nivel base + cada adicional), en vez de un único renglón.
+          // (nivel base + cada adicional), en vez de un único renglón. El
+          // % de descuento se cargó sobre el precio TOTAL del ítem (base +
+          // adicionales), así que se reparte ese mismo % en cada renglón
+          // (en vez de restar todo el monto del descuento solo de la
+          // base) para que la bonificación se vea aplicada a todo el
+          // ítem, no solo al nivel de complejidad.
+          const pctFrac = gross > 0 ? bonifAmount / gross : 0;
+
           const baseUnit = Number(complexity.price) || 0;
           const baseGross = baseUnit * qty;
-          const baseTotal = Math.max(0, baseGross - bonifAmount);
+          const baseBonif = baseGross * pctFrac;
+          const baseTotal = Math.max(0, baseGross - baseBonif);
 
           rows.push({
-            product: `${it.product?.name ?? "Producto"} (${complexity.label})`,
+            product: it.product?.name ?? "Producto",
             qty,
             unit: baseUnit,
-            bonifAmount,
-            bonifPct: baseGross > 0 ? (bonifAmount / baseGross) * 100 : 0,
+            bonifAmount: baseBonif,
+            bonifPct: pctFrac * 100,
             total: baseTotal,
+            discountReasonNote,
           });
 
           for (const addon of addons) {
             const addonUnit = baseUnit * (Number(addon.pct) || 0);
+            const addonGross = addonUnit * qty;
+            const addonBonif = addonGross * pctFrac;
             rows.push({
               product: addon.label,
               qty,
               unit: addonUnit,
-              bonifAmount: 0,
-              bonifPct: 0,
-              total: addonUnit * qty,
+              bonifAmount: addonBonif,
+              bonifPct: pctFrac * 100,
+              total: Math.max(0, addonGross - addonBonif),
             });
           }
         } else {
-          const optionsDesc = describeItemOptions(it.options);
           rows.push({
-            product: it.product?.name
-              ? optionsDesc
-                ? `${it.product.name} (${optionsDesc})`
-                : it.product.name
-              : "Producto",
+            product: it.product?.name ?? "Producto",
             qty,
             unit,
             bonifAmount,
             bonifPct,
             total,
+            discountReasonNote,
           });
         }
       }
@@ -584,14 +632,28 @@ export default function SalesContent({
             "Subtotal",
           ],
         ],
-        body: rows.map((r) => [
-          r.product,
-          String(r.qty),
-          formatMoney(r.unit, currency),
-          `${r.bonifPct.toFixed(0)}%`,
-          formatMoney(r.bonifAmount, currency),
-          formatMoney(r.total, currency),
-        ]),
+        body: rows.flatMap((r): any[] => {
+          const itemRow: any[] = [
+            r.product,
+            String(r.qty),
+            formatMoney(r.unit, currency),
+            `${r.bonifPct.toFixed(0)}%`,
+            formatMoney(r.bonifAmount, currency),
+            formatMoney(r.total, currency),
+          ];
+
+          if (!r.discountReasonNote) return [itemRow];
+
+          const noteRow: any[] = [
+            {
+              content: r.discountReasonNote,
+              colSpan: 6,
+              styles: { fontStyle: "italic", fontSize: 8, textColor: 100 },
+            },
+          ];
+
+          return [itemRow, noteRow];
+        }),
         styles: {
           fontSize: 10,
           cellPadding: 3,
@@ -686,6 +748,14 @@ export default function SalesContent({
     return { doc, totalFinal };
   }
 
+  function buildBudgetFileName(
+    budgetNumber: string,
+    customerName?: string | null,
+  ) {
+    const cleanName = (customerName ?? "").trim().replace(/[\\/:*?"<>|]+/g, "-");
+    return cleanName ? `${budgetNumber} - ${cleanName}.pdf` : `${budgetNumber}.pdf`;
+  }
+
   async function handleGenerateBudgetPdf(saleId: string) {
     setBudgetErr(null);
     setBudgetLoadingId(saleId);
@@ -724,7 +794,7 @@ export default function SalesContent({
         emissionDate: new Date(),
       });
 
-      doc.save(`${budgetNumber}.pdf`);
+      doc.save(buildBudgetFileName(budgetNumber, sale.customer_name));
       router.refresh();
     } catch (error) {
       console.error(error);
@@ -954,6 +1024,10 @@ export default function SalesContent({
         if (i !== idx) return it;
         const next = { ...it, ...patch };
 
+        if (patch.discount !== undefined && (Number(patch.discount) || 0) <= 0) {
+          next.discount_reason = undefined;
+        }
+
         if (patch.product_id) {
           const p = productById.get(patch.product_id);
           if (p?.has_complexity_pricing) {
@@ -997,6 +1071,10 @@ export default function SalesContent({
       prev.map((it, i) => {
         if (i !== idx) return it;
         const next = { ...it, ...patch };
+
+        if (patch.discount !== undefined && (Number(patch.discount) || 0) <= 0) {
+          next.discount_reason = undefined;
+        }
 
         if (patch.product_id) {
           const p = productById.get(patch.product_id);
@@ -1058,6 +1136,7 @@ export default function SalesContent({
             qty,
             unit_price: unit,
             discount: discountAmount, // ✅ guardamos monto en DB
+            discount_reason: pct > 0 ? (it.discount_reason ?? null) : null,
             options: buildItemOptions(
               productById.get(it.product_id),
               it.complexityLabel,
@@ -1100,6 +1179,7 @@ export default function SalesContent({
             qty,
             unit_price: unit,
             discount: discountAmount,
+            discount_reason: pct > 0 ? (it.discount_reason ?? null) : null,
             options: buildItemOptions(
               productById.get(it.product_id),
               it.complexityLabel,
@@ -1565,6 +1645,34 @@ export default function SalesContent({
                         </div>
                       </div>
 
+                      {(Number(it.discount) || 0) > 0 ? (
+                        <div className="mt-3 grid gap-2 max-w-xs">
+                          <Label>Motivo del descuento</Label>
+                          <Select
+                            value={it.discount_reason ?? "none"}
+                            onValueChange={(v) =>
+                              onChangeItem(idx, {
+                                discount_reason: v === "none" ? undefined : v,
+                              })
+                            }
+                          >
+                            <SelectTrigger className="w-full">
+                              <SelectValue placeholder="Sin motivo especificado" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="none">
+                                Sin motivo especificado
+                              </SelectItem>
+                              {DISCOUNT_REASONS.map((r) => (
+                                <SelectItem key={r.key} value={r.key}>
+                                  {r.label}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      ) : null}
+
                       {itemProduct?.has_complexity_pricing ? (
                         <div className="mt-3 space-y-2 rounded-md border border-dashed p-3">
                           <div className="grid gap-2 max-w-xs">
@@ -1848,6 +1956,34 @@ export default function SalesContent({
                         </div>
                       </div>
 
+                      {(Number(it.discount) || 0) > 0 ? (
+                        <div className="mt-3 grid gap-2 max-w-xs">
+                          <Label>Motivo del descuento</Label>
+                          <Select
+                            value={it.discount_reason ?? "none"}
+                            onValueChange={(v) =>
+                              onChangeEditItem(idx, {
+                                discount_reason: v === "none" ? undefined : v,
+                              })
+                            }
+                          >
+                            <SelectTrigger className="w-full">
+                              <SelectValue placeholder="Sin motivo especificado" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="none">
+                                Sin motivo especificado
+                              </SelectItem>
+                              {DISCOUNT_REASONS.map((r) => (
+                                <SelectItem key={r.key} value={r.key}>
+                                  {r.label}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      ) : null}
+
                       {itemProduct?.has_complexity_pricing ? (
                         <div className="mt-3 space-y-2 rounded-md border border-dashed p-3">
                           <div className="grid gap-2 max-w-xs">
@@ -2008,6 +2144,14 @@ export default function SalesContent({
                               ? `${Math.round(Number(plan.default_rate) * 100)}%`
                               : "—%"}
                           </Badge>
+                          {sale?.usd_ars_rate ? (
+                            <Badge variant="outline" className="rounded-full">
+                              Dólar: $
+                              {Number(sale.usd_ars_rate).toLocaleString(
+                                "es-AR",
+                              )}
+                            </Badge>
+                          ) : null}
                         </div>
                       </div>
 
@@ -2017,6 +2161,10 @@ export default function SalesContent({
                         const isBiomodeloView = viewItems.some(
                           (it) => it.options?.complexity,
                         );
+                        const isUsdView = viewItems.some(
+                          (it) => it.product?.currency === "USD",
+                        );
+                        const usdArsRate = Number(sale?.usd_ars_rate) || 0;
 
                         const rows = viewItems.map((it) => {
                           const qty = Number(it.qty) || 0;
@@ -2110,7 +2258,8 @@ export default function SalesContent({
                                     Total a facturar
                                   </div>
                                   <div className="mt-1 text-2xl font-semibold">
-                                    ${netSale.toLocaleString("es-AR")}
+                                    {isUsdView ? "U$D" : "$"}
+                                    {netSale.toLocaleString("es-AR")}
                                   </div>
                                   {orderDiscount > 0 ? (
                                     <div className="mt-1 text-xs text-muted-foreground">
@@ -2120,6 +2269,17 @@ export default function SalesContent({
                                         { maximumFractionDigits: 2 },
                                       )}
                                       %
+                                    </div>
+                                  ) : null}
+                                  {isUsdView && usdArsRate > 0 ? (
+                                    <div className="mt-1 text-xs text-muted-foreground">
+                                      ≈ $
+                                      {(netSale * usdArsRate).toLocaleString(
+                                        "es-AR",
+                                        { maximumFractionDigits: 0 },
+                                      )}{" "}
+                                      ARS (TC venta $
+                                      {usdArsRate.toLocaleString("es-AR")})
                                     </div>
                                   ) : null}
                                 </CardContent>
@@ -2428,6 +2588,32 @@ export default function SalesContent({
               />
             </div>
 
+            {closeHasUsd ? (
+              <div className="grid gap-2">
+                <Label>Cotización USD (venta)</Label>
+                <Input
+                  inputMode="decimal"
+                  value={usdRate}
+                  onChange={(e) => setUsdRate(e.target.value)}
+                  placeholder="Ej: 1050"
+                />
+                {usdRateLoading ? (
+                  <p className="text-xs text-muted-foreground">
+                    Buscando cotización...
+                  </p>
+                ) : usdRateFetchErr ? (
+                  <p className="text-xs text-amber-600">
+                    {usdRateFetchErr} Cargala a mano.
+                  </p>
+                ) : (
+                  <p className="text-xs text-muted-foreground">
+                    Precargado con el dólar oficial (venta). Si hace falta,
+                    lo podés editar.
+                  </p>
+                )}
+              </div>
+            ) : null}
+
             <div className="flex items-center justify-between rounded-md border px-3 py-2">
               <span className="text-sm text-muted-foreground">¿Pagado?</span>
               <input
@@ -2451,6 +2637,13 @@ export default function SalesContent({
                 setCloseErr(null);
                 if (!closeSaleId) return;
 
+                const usdRateNum = Number(usdRate);
+                if (closeHasUsd && (!usdRateNum || usdRateNum <= 0)) {
+                  return setCloseErr(
+                    "Ingresá la cotización del dólar para cerrar esta venta.",
+                  );
+                }
+
                 setCloseSaving(true);
                 try {
                   const res = await updateSaleStatusAndAddItems({
@@ -2459,6 +2652,7 @@ export default function SalesContent({
                     payment_method: paymentMethod,
                     invoice_number: invoiceNumber.trim() || null,
                     paid,
+                    usd_ars_rate: closeHasUsd ? usdRateNum : undefined,
                     // no pasamos items acá: cerrar ≠ Agregar ítems
                   });
 

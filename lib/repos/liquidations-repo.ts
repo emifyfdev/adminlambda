@@ -546,7 +546,7 @@ export async function getLiquidationVisualizadorSummary(liquidationId: string) {
 
   const { data: items, error: itemsErr } = await supabase
     .from("sale_items")
-    .select("qty, cost_at_sale, options")
+    .select("qty, cost_at_sale, options, sale:sales(usd_ars_rate)")
     .in("sale_id", saleIds)
     .not("options", "is", null);
 
@@ -560,8 +560,13 @@ export async function getLiquidationVisualizadorSummary(liquidationId: string) {
     if (!it.options?.complexity) continue;
     const q = Number(it.qty) || 0;
     const cost = Number(it.cost_at_sale) || 0;
+    // cost_at_sale queda en la moneda original del ítem; si la venta es en
+    // dólares, se convierte a pesos con la cotización cargada al cerrarla
+    // (misma lógica que computeAndFreezeOnConfirm en sales-repo.ts).
+    const rate = Number(it.sale?.usd_ars_rate) || 0;
+    const fx = rate > 0 ? rate : 1;
     qty += q;
-    total += cost * q;
+    total += cost * q * fx;
   }
 
   return { ok: true as const, error: null, qty, total };

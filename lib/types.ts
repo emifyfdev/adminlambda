@@ -31,6 +31,9 @@ export type ComplexityTier = {
   price: number
 }
 
+export const PRODUCT_CURRENCIES = ["ARS", "USD"] as const
+export type ProductCurrency = (typeof PRODUCT_CURRENCIES)[number]
+
 export type Product = {
   id: string
   name: string
@@ -42,6 +45,7 @@ export type Product = {
   created_at: string
   has_complexity_pricing: boolean
   complexity_tiers: ComplexityTier[] | null
+  currency: ProductCurrency
 }
 
 // Adicionales exclusivos de productos con niveles de complejidad (ej: Biomodelo).
@@ -171,6 +175,23 @@ export const CANCEL_REASONS = [
 ] as const;
 
 export type CancelReason = (typeof CANCEL_REASONS)[number];
+
+// Motivo del descuento aplicado a un ítem de venta. El texto de `note` se
+// imprime como aclaración en el presupuesto (PDF) debajo del renglón del
+// ítem, para dejar constancia de la condición pactada con el cliente.
+export const DISCOUNT_REASONS = [
+  {
+    key: "advertising_agreement",
+    label: "Descuento por acuerdo publicitario",
+    note: "El presente descuento se otorga en virtud de la autorización del cliente para que Lambda 3D difunda este caso en sus redes sociales con fines educativos y comerciales.",
+  },
+] as const;
+
+export type DiscountReasonKey = (typeof DISCOUNT_REASONS)[number]["key"];
+
+export function getDiscountReasonNote(key: string | null | undefined) {
+  return DISCOUNT_REASONS.find((r) => r.key === key)?.note ?? null;
+}
 
 export const PAYMENT_METHODS = [
   "EFECTIVO",
