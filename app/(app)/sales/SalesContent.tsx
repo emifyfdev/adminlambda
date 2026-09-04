@@ -2144,6 +2144,14 @@ export default function SalesContent({
                               ? `${Math.round(Number(plan.default_rate) * 100)}%`
                               : "—%"}
                           </Badge>
+                          {sale?.usd_ars_rate ? (
+                            <Badge variant="outline" className="rounded-full">
+                              Dólar: $
+                              {Number(sale.usd_ars_rate).toLocaleString(
+                                "es-AR",
+                              )}
+                            </Badge>
+                          ) : null}
                         </div>
                       </div>
 
@@ -2250,7 +2258,8 @@ export default function SalesContent({
                                     Total a facturar
                                   </div>
                                   <div className="mt-1 text-2xl font-semibold">
-                                    ${netSale.toLocaleString("es-AR")}
+                                    {isUsdView ? "U$D" : "$"}
+                                    {netSale.toLocaleString("es-AR")}
                                   </div>
                                   {orderDiscount > 0 ? (
                                     <div className="mt-1 text-xs text-muted-foreground">
